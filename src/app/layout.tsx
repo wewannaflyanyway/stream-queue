@@ -17,7 +17,7 @@ export const metadata: Metadata = {
   description: "Интерактивная очередь заказа треков для стрима",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html
       lang="en"
