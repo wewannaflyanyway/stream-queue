@@ -138,28 +138,43 @@ export default function ViewerPage() {
     };
   }, []);
 
-  // 3. Дебаунс-поиск по Spotify (300 мс)
+// 3. Дебаунс-поиск по Spotify (300 мс) с отменой устаревших запросов
   useEffect(() => {
-    if (selectedTrack || query.trim().length < 2) {
+    const trimmed = query.trim();
+    if (selectedTrack || trimmed.length < 2) {
       setResults([]);
       setIsSearching(false);
       return;
     }
 
+    const controller = new AbortController();
     setIsSearching(true);
+
     const handler = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/spotify/search?q=${encodeURIComponent(query.trim())}`);
+        const res = await fetch(
+          `/api/spotify/search?q=${encodeURIComponent(trimmed)}&t=${Date.now()}`,
+          { signal: controller.signal, cache: 'no-store' }
+        );
         const data = await res.json();
-        setResults(data.tracks || []);
-      } catch {
-        setResults([]);
+        if (!controller.signal.aborted) {
+          setResults(data.tracks || []);
+        }
+      } catch (err: any) {
+        if (err?.name !== 'AbortError') {
+          setResults([]);
+        }
       } finally {
-        setIsSearching(false);
+        if (!controller.signal.aborted) {
+          setIsSearching(false);
+        }
       }
     }, 300);
 
-    return () => clearTimeout(handler);
+    return () => {
+      clearTimeout(handler);
+      controller.abort();
+    };
   }, [query, selectedTrack]);
 
   // 4. Клиентская валидация выбранного трека
