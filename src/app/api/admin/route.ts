@@ -14,12 +14,10 @@ export async function POST(req: NextRequest) {
     const supabase = getServiceSupabase();
 
     switch (action) {
-      // 1. Проверка пин-кода при входе
       case 'verify_pin': {
         return NextResponse.json({ ok: true });
       }
 
-      // 2. Одобрение трека (отправка в очередь Spotify + смена статуса)
       case 'approve': {
         const { id, spotify_uri } = payload;
         try {
@@ -27,71 +25,55 @@ export async function POST(req: NextRequest) {
         } catch (err: any) {
           if (err.message === 'NO_ACTIVE_DEVICE') {
             return NextResponse.json(
-              {
-                error:
-                  'Плеер Spotify сейчас не активен! Включи любой трек на ПК и нажми «Одобрить» ещё раз.',
-              },
+              { error: 'Плеер Spotify сейчас не активен! Включи любой трек на ПК и нажми «Одобрить» ещё раз.' },
               { status: 404 }
             );
           }
           throw err;
         }
 
-        const { error } = await supabase
-          .from('song_requests')
-          .update({ status: 'approved' })
-          .eq('id', id);
-
+        const { error } = await supabase.from('song_requests').update({ status: 'approved' }).eq('id', id);
         if (error) throw error;
         return NextResponse.json({ ok: true });
       }
 
-      // 3. Отклонение трека
       case 'reject': {
         const { id } = payload;
-        const { error } = await supabase
-          .from('song_requests')
-          .update({ status: 'rejected' })
-          .eq('id', id);
-
+        const { error } = await supabase.from('song_requests').update({ status: 'rejected' }).eq('id', id);
         if (error) throw error;
         return NextResponse.json({ ok: true });
       }
 
-      // 4. Скип трека в Spotify
       case 'skip': {
         try {
           await skipSpotifyTrack();
           return NextResponse.json({ ok: true });
         } catch (err: any) {
           if (err.message === 'NO_ACTIVE_DEVICE') {
-            return NextResponse.json(
-              { error: 'Плеер Spotify не активен! Запусти музыку в клиенте Spotify.' },
-              { status: 404 }
-            );
+            return NextResponse.json({ error: 'Плеер Spotify не активен!' }, { status: 404 });
           }
           throw err;
         }
       }
 
-      // 5. Panic Button: очистка всей очереди ожидания
       case 'clear_queue': {
-        const { error } = await supabase
-          .from('song_requests')
-          .update({ status: 'rejected' })
-          .eq('status', 'pending');
-
+        const { error } = await supabase.from('song_requests').update({ status: 'rejected' }).eq('status', 'pending');
         if (error) throw error;
         return NextResponse.json({ ok: true });
       }
 
-      // 6. Сохранение настроек стрима или переключение быстрых тумблеров
-      case 'update_settings': {
+      // НОВАЯ ФУНКЦИЯ: Очистка истории
+      case 'clear_history': {
         const { error } = await supabase
-          .from('stream_settings')
-          .update(payload)
-          .eq('id', 1);
+          .from('song_requests')
+          .delete()
+          .in('status', ['approved', 'rejected', 'played']);
+        if (error) throw error;
+        return NextResponse.json({ ok: true });
+      }
 
+      case 'update_settings': {
+        const { error } = await supabase.from('stream_settings').update(payload).eq('id', 1);
         if (error) throw error;
         return NextResponse.json({ ok: true });
       }

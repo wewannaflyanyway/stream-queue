@@ -234,6 +234,17 @@ export default function AdminPage() {
       showToast(e.message, 'err');
     }
   };
+// Очистить историю
+  const handleClearHistory = async () => {
+    if (!confirm('Точно удалить всю историю одобренных и отклоненных треков? Это действие необратимо.')) return;
+    try {
+      await callAdminApi('clear_history');
+      showToast('История полностью очищена');
+      setRequests((prev) => prev.filter((r) => r.status === 'pending'));
+    } catch (e: any) {
+      showToast(e.message, 'err');
+    }
+  };
 
   // Сохранение всех настроек
   const handleSaveSettings = async (e: React.FormEvent) => {
@@ -516,9 +527,23 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* ВКЛАДКА 2: ИСТОРИЯ СТРИМА */}
+       {/* ВКЛАДКА 2: ИСТОРИЯ СТРИМА */}
         {activeTab === 'history' && (
           <div className="rounded-3xl bg-white/[0.04] backdrop-blur-xl border border-white/[0.08] overflow-hidden">
+            {/* Шапка с кнопкой очистки */}
+            <div className="p-4 border-b border-white/[0.08] flex items-center justify-between bg-black/20">
+              <span className="text-sm font-semibold text-white">Управление историей</span>
+              <button
+                type="button"
+                onClick={handleClearHistory}
+                disabled={approvedHistory.length === 0}
+                className="px-3 py-1.5 rounded-xl bg-[#E91429]/15 hover:bg-[#E91429]/25 border border-[#E91429]/30 text-[#ff6b78] text-xs font-semibold flex items-center gap-2 transition disabled:opacity-40"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Очистить историю
+              </button>
+            </div>
+
             {approvedHistory.length === 0 ? (
               <div className="p-10 text-center text-sm text-[#A7A7A7]">
                 История одобренных треков пока пуста
