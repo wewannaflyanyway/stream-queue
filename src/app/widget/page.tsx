@@ -6,7 +6,6 @@ import { Music, SkipForward, AlertCircle, Loader2, User } from 'lucide-react';
 interface TrackInfo {
   name: string;
   artist: string;
-  cover?: string;
   orderedBy?: string | null;
 }
 
@@ -96,6 +95,7 @@ export default function WidgetPage() {
           </div>
         )}
 
+        {/* Состояние: Музыка на паузе */}
         {!loading && !clientError && !data.error && !data.isPlaying && (
           <div className="w-[600px] rounded-3xl bg-[#121212]/90 border border-white/20 p-5 shadow-xl backdrop-blur-md">
             <div className="flex items-center gap-5">
@@ -110,16 +110,14 @@ export default function WidgetPage() {
           </div>
         )}
 
+        {/* Состояние: Музыка играет */}
         {!loading && !clientError && !data.error && data.isPlaying && data.current && (
           <div className="w-[600px] rounded-3xl bg-[#121212]/90 border border-white/20 p-5 shadow-2xl backdrop-blur-md">
-            <div className="flex items-center gap-6">
-              <div className="relative shrink-0 w-28 h-28 rounded-2xl overflow-hidden shadow-lg border border-white/10 bg-[#1e1e1e]">
-                <img 
-                  key={data.current.cover}
-                  src={data.current.cover ? `/api/proxy-image?url=${encodeURIComponent(data.current.cover)}` : 'https://placehold.co/112x112/121212/1DB954?text=♪'} 
-                  alt="cover"
-                  className="w-full h-full object-cover"
-                />
+            <div className="flex items-center gap-5">
+              
+              {/* ЗАМЕНА ОБЛОЖКИ НА СТИЛЬНУЮ ИКОНКУ */}
+              <div className="w-20 h-20 rounded-2xl bg-[#1DB954]/10 flex items-center justify-center border border-[#1DB954]/20 shrink-0 shadow-inner">
+                <Music className="w-10 h-10 text-[#1DB954]" />
               </div>
 
               <div className="flex-1 min-w-0 flex flex-col justify-center">
