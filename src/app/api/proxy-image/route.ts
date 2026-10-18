@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(req: NextRequest) {
   const url = req.nextUrl.searchParams.get('url');
 
-  // Защита: разрешаем проксировать только картинки Spotify
   if (!url || !url.startsWith('https://i.scdn.co/')) {
     return new NextResponse('Invalid URL', { status: 400 });
   }
@@ -18,7 +19,7 @@ export async function GET(req: NextRequest) {
     return new NextResponse(buffer, {
       headers: {
         'Content-Type': response.headers.get('Content-Type') || 'image/jpeg',
-        'Cache-Control': 'public, max-age=86400', // Кэшируем на сутки для экономии
+        'Cache-Control': 'public, max-age=86400',
       },
     });
   } catch (error) {

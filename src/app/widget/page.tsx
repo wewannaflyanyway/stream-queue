@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { Music, SkipForward, AlertCircle, Loader2 } from 'lucide-react';
+import { Music, SkipForward, AlertCircle, Loader2, User } from 'lucide-react';
 
 interface TrackInfo {
   name: string;
   artist: string;
   cover?: string;
+  orderedBy?: string | null;
 }
 
 interface NowPlayingData {
@@ -40,14 +41,13 @@ export default function WidgetPage() {
     };
 
     fetchData();
-    const interval = setInterval(fetchData, 3500); // Опрос раз в 3.5 секунды
+    const interval = setInterval(fetchData, 3500);
     return () => clearInterval(interval);
   }, []);
 
   return (
     <>
       <style dangerouslySetInnerHTML={{__html: `
-        /* Жесткая прозрачность для OBS */
         body, html { 
           background-color: transparent !important; 
           background: transparent !important;
@@ -56,13 +56,14 @@ export default function WidgetPage() {
           overflow: hidden;
           white-space: nowrap;
           position: relative;
-          mask-image: linear-gradient(to right, transparent, black 5%, black 95%, transparent);
-          -webkit-mask-image: linear-gradient(to right, transparent, black 5%, black 95%, transparent);
+          padding-left: 2px;
+          mask-image: linear-gradient(to right, black 85%, transparent 100%);
+          -webkit-mask-image: linear-gradient(to right, black 85%, transparent 100%);
         }
         .marquee-content {
           display: inline-block;
-          animation: marquee 12s linear infinite;
-          padding-right: 40px;
+          animation: marquee 15s linear infinite; 
+          padding-right: 60px; 
         }
         .marquee-content.short {
           animation: none;
@@ -74,48 +75,48 @@ export default function WidgetPage() {
         }
       `}} />
 
-      <div className="w-screen h-screen overflow-hidden flex items-start justify-start p-4">
+      <div className="w-screen h-screen overflow-hidden flex items-start justify-start p-6">
         
         {loading && (
-          <div className="flex items-center gap-2 rounded-xl bg-[#1DB954] text-black font-bold px-4 py-2 shadow-lg">
-            <Loader2 className="w-4 h-4 animate-spin" />
+          <div className="flex items-center gap-3 rounded-2xl bg-[#1DB954] text-black font-bold px-6 py-4 shadow-lg text-lg">
+            <Loader2 className="w-6 h-6 animate-spin" />
             <span>Подключение...</span>
           </div>
         )}
 
         {(clientError || data.error) && !loading && (
-          <div className="max-w-[360px] rounded-xl bg-red-600 border border-red-400 p-3 text-white text-xs shadow-2xl">
-            <div className="flex gap-2 items-start">
-              <AlertCircle className="w-5 h-5 shrink-0" />
+          <div className="max-w-[600px] rounded-2xl bg-red-600 border border-red-400 p-5 text-white shadow-2xl">
+            <div className="flex gap-3 items-start">
+              <AlertCircle className="w-7 h-7 shrink-0 mt-0.5" />
               <div>
-                <p className="font-bold text-sm">Ошибка виджета:</p>
-                <p className="opacity-90 mt-1 font-mono break-all">{clientError || data.error}</p>
+                <p className="font-bold text-lg">Ошибка виджета:</p>
+                <p className="opacity-90 mt-1.5 font-mono break-all text-sm">{clientError || data.error}</p>
               </div>
             </div>
           </div>
         )}
 
         {!loading && !clientError && !data.error && !data.isPlaying && (
-          <div className="w-[360px] rounded-2xl bg-[#121212]/90 border border-white/20 p-3 shadow-xl backdrop-blur-md">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-lg bg-white/10 flex items-center justify-center border border-white/10 shrink-0">
-                <Music className="w-6 h-6 text-white/50" />
+          <div className="w-[600px] rounded-3xl bg-[#121212]/90 border border-white/20 p-5 shadow-xl backdrop-blur-md">
+            <div className="flex items-center gap-5">
+              <div className="w-20 h-20 rounded-2xl bg-white/10 flex items-center justify-center border border-white/10 shrink-0">
+                <Music className="w-10 h-10 text-white/50" />
               </div>
               <div>
-                <p className="text-white font-bold text-sm">Музыка на паузе</p>
-                <p className="text-[#A7A7A7] text-xs mt-0.5">Включите трек в Spotify</p>
+                <p className="text-white font-bold text-xl">Музыка на паузе</p>
+                <p className="text-[#A7A7A7] text-base mt-1">Включите трек в Spotify</p>
               </div>
             </div>
           </div>
         )}
 
         {!loading && !clientError && !data.error && data.isPlaying && data.current && (
-          <div className="w-[360px] rounded-2xl bg-[#121212]/90 border border-white/20 p-3 shadow-2xl backdrop-blur-md">
-            <div className="flex items-center gap-4">
-              <div className="relative shrink-0 w-16 h-16 rounded-xl overflow-hidden shadow-lg border border-white/10 bg-[#1e1e1e]">
-                {/* ПРОКСИРУЕМ КАРТИНКУ ДЛЯ OBS БЕЗ VPN */}
+          <div className="w-[600px] rounded-3xl bg-[#121212]/90 border border-white/20 p-5 shadow-2xl backdrop-blur-md">
+            <div className="flex items-center gap-6">
+              <div className="relative shrink-0 w-28 h-28 rounded-2xl overflow-hidden shadow-lg border border-white/10 bg-[#1e1e1e]">
                 <img 
-                  src={data.current.cover ? `/api/proxy-image?url=${encodeURIComponent(data.current.cover)}` : 'https://placehold.co/64x64/121212/1DB954?text=♪'} 
+                  key={data.current.cover}
+                  src={data.current.cover ? `/api/proxy-image?url=${encodeURIComponent(data.current.cover)}` : 'https://placehold.co/112x112/121212/1DB954?text=♪'} 
                   alt="cover"
                   className="w-full h-full object-cover"
                 />
@@ -123,26 +124,33 @@ export default function WidgetPage() {
 
               <div className="flex-1 min-w-0 flex flex-col justify-center">
                 <div className="marquee-container w-full">
-                  <div className={`marquee-content ${data.current.name.length < 22 ? 'short' : ''}`}>
-                    <span className="text-white font-bold text-sm tracking-tight mr-8">
+                  <div className={`marquee-content ${data.current.name.length < 26 ? 'short' : ''}`}>
+                    <span className="text-white font-bold text-2xl tracking-tight mr-12">
                       {data.current.name}
                     </span>
-                    {data.current.name.length >= 22 && (
-                      <span className="text-white font-bold text-sm tracking-tight">
+                    {data.current.name.length >= 26 && (
+                      <span className="text-white font-bold text-2xl tracking-tight">
                         {data.current.name}
                       </span>
                     )}
                   </div>
                 </div>
                 
-                <p className="text-[#A7A7A7] text-xs truncate mt-0.5">
+                <p className="text-[#A7A7A7] text-base truncate mt-1">
                   {data.current.artist}
                 </p>
 
+                {data.current.orderedBy && (
+                  <div className="mt-2 flex items-center gap-1.5 text-sm text-[#1ed760] font-semibold truncate">
+                    <User className="w-4 h-4 text-[#1ed760]" />
+                    <span>Заказ от: {data.current.orderedBy}</span>
+                  </div>
+                )}
+
                 {data.next && (
-                  <div className="mt-2 flex items-center gap-1.5 border-t border-white/10 pt-1.5">
-                    <SkipForward className="w-3 h-3 text-[#1DB954] shrink-0" />
-                    <p className="text-[10px] text-[#A7A7A7] truncate">
+                  <div className="mt-3 flex items-center gap-2 border-t border-white/10 pt-2.5">
+                    <SkipForward className="w-5 h-5 text-[#1DB954] shrink-0" />
+                    <p className="text-sm text-[#A7A7A7] truncate">
                       <span className="text-white/60 font-medium">Далее:</span> {data.next.artist} — {data.next.name}
                     </p>
                   </div>
