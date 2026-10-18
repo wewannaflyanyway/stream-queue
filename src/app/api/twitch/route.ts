@@ -2,8 +2,6 @@ import { NextRequest } from 'next/server';
 import { getServiceSupabase } from '@/lib/supabase';
 import { searchSpotifyTracks, addTrackToSpotifyQueue } from '@/lib/spotify';
 
-export const dynamic = 'force-dynamic';
-
 export async function GET(req: NextRequest) {
   // Получаем параметры из запроса Nightbot
   const q = req.nextUrl.searchParams.get('query')?.trim();
