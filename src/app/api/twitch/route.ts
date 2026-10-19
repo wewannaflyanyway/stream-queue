@@ -3,11 +3,9 @@ import { getServiceSupabase } from '@/lib/supabase';
 import { searchSpotifyTracks, addTrackToSpotifyQueue } from '@/lib/spotify';
 
 export async function GET(req: NextRequest) {
-  // Получаем параметры из запроса Nightbot
   const q = req.nextUrl.searchParams.get('query')?.trim();
   const user = req.nextUrl.searchParams.get('user')?.trim() || 'Зритель';
 
-  // Если зритель написал просто !sr без названия
   if (!q) {
     return new Response(`@${user}, укажи название трека после команды (например: !sr Linkin Park Numb)`);
   }
@@ -15,13 +13,11 @@ export async function GET(req: NextRequest) {
   try {
     const supabase = getServiceSupabase();
     
-    // 1. Загружаем настройки
     const { data: settings } = await supabase.from('stream_settings').select('*').eq('id', 1).single();
     if (!settings?.is_accepting) {
       return new Response(`@${user}, прием музыки сейчас закрыт стримером.`);
     }
 
-    // 2. Проверяем переполненность очереди
     const { count: pendingCount } = await supabase
       .from('song_requests')
       .select('*', { count: 'exact', head: true })
@@ -31,14 +27,44 @@ export async function GET(req: NextRequest) {
       return new Response(`@${user}, очередь переполнена. Попробуй позже.`);
     }
 
-    // 3. Ищем трек в Spotify
+    // 1. Проверка кулдауна самого зрителя (анти-спам)
+    if (settings.cooldown_user_sec > 0) {
+      const cooldownAgo = new Date(Date.now() - settings.cooldown_user_sec * 1000).toISOString();
+      const { data: userRecent } = await supabase
+        .from('song_requests')
+        .select('id')
+        .eq('sender_name', user)
+        .gte('created_at', cooldownAgo)
+        .limit(1);
+
+      if (userRecent && userRecent.length > 0) {
+        const min = Math.ceil(settings.cooldown_user_sec / 60);
+        return new Response(`@${user}, подожди! Следующий трек можно заказать через ${min} мин.`);
+      }
+    }
+
     const tracks = await searchSpotifyTracks(q);
     if (!tracks || tracks.length === 0) {
       return new Response(`@${user}, трек по запросу "${q}" не найден в Spotify.`);
     }
-    const track = tracks[0]; // Берем самый первый (релевантный) результат
+    const track = tracks[0]; 
 
-    // 4. Валидация по правилам админки
+    // 2. Проверка дубликатов трека
+    if (settings.prevent_duplicates) {
+      const dupAgo = new Date(Date.now() - settings.duplicate_cooldown_min * 60 * 1000).toISOString();
+      const { data: dupes } = await supabase
+        .from('song_requests')
+        .select('id')
+        .eq('spotify_uri', track.uri)
+        .neq('status', 'rejected')
+        .gte('created_at', dupAgo)
+        .limit(1);
+
+      if (dupes && dupes.length > 0) {
+        return new Response(`@${user}, этот трек уже заказывали недавно! Выбери другой.`);
+      }
+    }
+
     const durationSec = Math.ceil(track.durationMs / 1000);
     if (durationSec > settings.max_duration_sec) {
       return new Response(`@${user}, трек "${track.name}" слишком длинный.`);
@@ -53,18 +79,16 @@ export async function GET(req: NextRequest) {
       return new Response(`@${user}, этот трек заблокирован фильтром слов.`);
     }
 
-    // 5. Логика автодобавления
     let initialStatus = 'pending';
     if (settings.auto_approve && !(track.isExplicit && settings.explicit_mode === 'manual')) {
       try {
         await addTrackToSpotifyQueue(track.uri);
         initialStatus = 'approved';
       } catch {
-        initialStatus = 'pending'; // Если Spotify спит, кидаем в pending
+        initialStatus = 'pending'; 
       }
     }
 
-    // 6. Сохраняем в базу данных Supabase
     await supabase.from('song_requests').insert({
       track_name: track.name,
       artist_name: track.artist,
@@ -77,7 +101,6 @@ export async function GET(req: NextRequest) {
       status: initialStatus,
     });
 
-    // 7. Отдаем ответ в чат
     if (initialStatus === 'approved') {
        return new Response(`@${user}, трек ${track.artist} — ${track.name} сразу добавлен в плеер!`);
     }

@@ -5,34 +5,35 @@ import { getServiceSupabase } from '@/lib/supabase';
 export async function GET(req: NextRequest) {
   try {
     const token = await getStreamerAccessToken();
-    
-    // 1. Получаем статус плеера
+    const supabase = getServiceSupabase();
+
+    // Забираем настройки цветов из БД
+    const { data: settings } = await supabase
+      .from('stream_settings')
+      .select('widget_bg_color, widget_text_color, widget_accent_color, widget_opacity')
+      .eq('id', 1)
+      .single();
+
     const playerRes = await fetch('https://api.spotify.com/v1/me/player', {
       headers: { Authorization: `Bearer ${token}` },
       cache: 'no-store',
     });
 
     if (playerRes.status === 204 || playerRes.status === 404) {
-      return NextResponse.json({ isPlaying: false }, { headers: { 'Cache-Control': 'no-store' } });
+      return NextResponse.json({ isPlaying: false, settings }, { headers: { 'Cache-Control': 'no-store' } });
     }
 
-    if (!playerRes.ok) {
-      throw new Error(`Ошибка Spotify API (${playerRes.status})`);
-    }
-
+    if (!playerRes.ok) throw new Error(`Ошибка API (${playerRes.status})`);
     const data = await playerRes.json();
 
     if (!data || !data.is_playing || !data.item) {
-      return NextResponse.json({ isPlaying: false }, { headers: { 'Cache-Control': 'no-store' } });
+      return NextResponse.json({ isPlaying: false, settings }, { headers: { 'Cache-Control': 'no-store' } });
     }
 
     const trackUri = data.item.uri;
     let orderedBy: string | null = null;
 
-    // 2. Ищем, кто заказал этот трек, в базе данных Supabase
     try {
-      const supabase = getServiceSupabase();
-      // Ищем самую свежую одобренную или сыгранную заявку с этим URI
       const { data: requestData } = await supabase
         .from('song_requests')
         .select('sender_name')
@@ -41,22 +42,15 @@ export async function GET(req: NextRequest) {
         .order('created_at', { ascending: false })
         .limit(1);
 
-      if (requestData && requestData.length > 0) {
-        orderedBy = requestData[0].sender_name;
-      }
-    } catch (dbError) {
-      console.error('Ошибка поиска заказчика в БД:', dbError);
-      // Если БД недоступна, не ломаем виджет, просто не показываем ник
-    }
+      if (requestData && requestData.length > 0) orderedBy = requestData[0].sender_name;
+    } catch (e) {}
 
     const currentTrack = {
       name: data.item.name,
       artist: data.item.artists.map((a: any) => a.name).join(', '),
-      cover: data.item.album?.images?.[0]?.url || '',
-      orderedBy: orderedBy, // Передаем ник на фронтенд
+      orderedBy: orderedBy,
     };
 
-    // 3. Пытаемся получить следующий трек
     let nextTrack = null;
     try {
       const queueRes = await fetch('https://api.spotify.com/v1/me/player/queue', {
@@ -73,12 +67,10 @@ export async function GET(req: NextRequest) {
           };
         }
       }
-    } catch (e) {
-      // Игнорируем ошибку очереди
-    }
+    } catch (e) {}
 
     return NextResponse.json(
-      { isPlaying: true, current: currentTrack, next: nextTrack },
+      { isPlaying: true, current: currentTrack, next: nextTrack, settings },
       { headers: { 'Cache-Control': 'no-store' } }
     );
   } catch (err: any) {

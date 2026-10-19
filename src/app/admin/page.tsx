@@ -62,7 +62,7 @@ export default function AdminPage() {
 
   const [settings, setSettings] = useState<any>(null);
   const [requests, setRequests] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState<'queue' | 'history' | 'settings'>('queue');
+  const [activeTab, setActiveTab] = useState<'queue' | 'history' | 'settings' | 'widget'>('queue');
   const [toast, setToast] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
 
@@ -425,6 +425,19 @@ export default function AdminPage() {
 
           <button
             type="button"
+            onClick={() => setActiveTab('widget')}
+            className={`px-5 py-2.5 rounded-2xl text-xs font-semibold flex items-center gap-2 transition cursor-pointer ${
+              activeTab === 'widget'
+                ? 'bg-[#1DB954] text-black'
+                : 'bg-white/[0.04] text-[#A7A7A7] hover:text-white'
+            }`}
+          >
+            <Sparkles className="w-4 h-4" />
+            Виджет OBS
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveTab('settings')}
             className={`px-5 py-2.5 rounded-2xl text-xs font-semibold flex items-center gap-2 transition cursor-pointer ${
               activeTab === 'settings'
@@ -716,7 +729,95 @@ export default function AdminPage() {
             </button>
           </form>
         )}
-      </div>
+      
+      {/* ВКЛАДКА 4: НАСТРОЙКИ ВИДЖЕТА OBS */}
+        {activeTab === 'widget' && settings && (
+          <form
+            onSubmit={handleSaveSettings}
+            className="rounded-3xl bg-white/[0.04] backdrop-blur-xl border border-white/[0.08] p-6 space-y-6"
+          >
+            <h2 className="text-lg font-bold text-white mb-2">Внешний вид виджета (OBS Studio)</h2>
+            <p className="text-xs text-[#A7A7A7] mb-6">Эти настройки применяются к виджету мгновенно без перезагрузки браузера в OBS.</p>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-xs text-[#A7A7A7] mb-2">Цвет фона подложки</label>
+                <div className="flex gap-3 items-center">
+                  <input
+                    type="color"
+                    value={settings.widget_bg_color || '#121212'}
+                    onChange={(e) => setSettings({ ...settings, widget_bg_color: e.target.value })}
+                    className="w-10 h-10 rounded cursor-pointer border-0 bg-transparent p-0"
+                  />
+                  <input
+                    type="text"
+                    value={settings.widget_bg_color || '#121212'}
+                    onChange={(e) => setSettings({ ...settings, widget_bg_color: e.target.value })}
+                    className="flex-1 px-4 py-2.5 rounded-2xl bg-black/40 border border-white/10 text-sm font-mono text-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs text-[#A7A7A7] mb-2">Цвет текста (Название и автор)</label>
+                <div className="flex gap-3 items-center">
+                  <input
+                    type="color"
+                    value={settings.widget_text_color || '#ffffff'}
+                    onChange={(e) => setSettings({ ...settings, widget_text_color: e.target.value })}
+                    className="w-10 h-10 rounded cursor-pointer border-0 bg-transparent p-0"
+                  />
+                  <input
+                    type="text"
+                    value={settings.widget_text_color || '#ffffff'}
+                    onChange={(e) => setSettings({ ...settings, widget_text_color: e.target.value })}
+                    className="flex-1 px-4 py-2.5 rounded-2xl bg-black/40 border border-white/10 text-sm font-mono text-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs text-[#A7A7A7] mb-2">Акцентный цвет (Иконка, ник зрителя)</label>
+                <div className="flex gap-3 items-center">
+                  <input
+                    type="color"
+                    value={settings.widget_accent_color || '#1DB954'}
+                    onChange={(e) => setSettings({ ...settings, widget_accent_color: e.target.value })}
+                    className="w-10 h-10 rounded cursor-pointer border-0 bg-transparent p-0"
+                  />
+                  <input
+                    type="text"
+                    value={settings.widget_accent_color || '#1DB954'}
+                    onChange={(e) => setSettings({ ...settings, widget_accent_color: e.target.value })}
+                    className="flex-1 px-4 py-2.5 rounded-2xl bg-black/40 border border-white/10 text-sm font-mono text-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs text-[#A7A7A7] mb-2">
+                  Прозрачность фона виджета: <span className="text-white font-bold">{settings.widget_opacity || 90}%</span>
+                </label>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={settings.widget_opacity || 90}
+                  onChange={(e) => setSettings({ ...settings, widget_opacity: Number(e.target.value) })}
+                  className="w-full mt-3 accent-[#1DB954]"
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              className="mt-6 px-6 py-3 rounded-2xl bg-[#1DB954] hover:bg-[#1ed760] text-black font-bold text-sm transition cursor-pointer"
+            >
+              Сохранить дизайн виджета
+            </button>
+          </form>
+        )}
+        </div>
     </div>
   );
 }
