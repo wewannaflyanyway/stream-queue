@@ -40,7 +40,8 @@ const hexToRgba = (hex: string, opacity: number) => {
 export default function WidgetPage() {
   const [data, setData] = useState<NowPlayingData>({ isPlaying: false });
   const [clientError, setClientError] = useState<string | null>(null);
-  
+  const [loading, setLoading] = useState(true); // <--- ДОБАВЬ ЭТУ СТРОЧКУ
+
   // Счетчик неудачных запросов (чтобы игнорировать разовые просадки сети)
   const failCountRef = useRef(0);
 
@@ -51,15 +52,22 @@ export default function WidgetPage() {
         if (!res.ok) throw new Error(`Ошибка сервера: ${res.status}`);
         
         const json = await res.json();
+        
+        // Если сервер вернул ошибку внутри JSON (например, отвалился токен)
+        if (json.error) throw new Error(json.error);
+
         setData(json);
         setClientError(null);
-        failCountRef.current = 0; // Сбрасываем счетчик ошибок при успехе
+        failCountRef.current = 0; // Сбрасываем счетчик
       } catch (err: any) {
         failCountRef.current += 1;
-        // Показываем ошибку, только если Spotify не отвечает 3 раза подряд (около 10 сек)
-        if (failCountRef.current >= 3) {
-          setClientError(err.message || 'Не удалось получить данные');
+        // НЕ стираем data. Оставляем на экране прошлый трек, чтобы виджет не моргал.
+        // Показываем ошибку только если Spotify лежит "наглухо" > 17 секунд
+        if (failCountRef.current >= 5) {
+          setClientError(err.message || 'Потеряно соединение с сервером');
         }
+      } finally {
+        setLoading(false);
       }
     };
 

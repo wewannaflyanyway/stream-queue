@@ -7,7 +7,6 @@ export async function GET(req: NextRequest) {
     const token = await getStreamerAccessToken();
     const supabase = getServiceSupabase();
 
-    // Забираем настройки цветов из БД
     const { data: settings } = await supabase
       .from('stream_settings')
       .select('widget_bg_color, widget_text_color, widget_accent_color, widget_opacity')
@@ -32,33 +31,30 @@ export async function GET(req: NextRequest) {
 
     const trackUri = data.item.uri;
     let orderedBy: string | null = null;
+    let nextTrack = null;
 
-    try {
-      const { data: requestData } = await supabase
+    // Запускаем запросы к БД и Очереди ПАРАЛЛЕЛЬНО для ускорения ответа
+    const [dbResult, queueResult] = await Promise.allSettled([
+      supabase
         .from('song_requests')
         .select('sender_name')
         .eq('spotify_uri', trackUri)
         .in('status', ['approved', 'played', 'pending'])
         .order('created_at', { ascending: false })
-        .limit(1);
-
-      if (requestData && requestData.length > 0) orderedBy = requestData[0].sender_name;
-    } catch (e) {}
-
-    const currentTrack = {
-      name: data.item.name,
-      artist: data.item.artists.map((a: any) => a.name).join(', '),
-      orderedBy: orderedBy,
-    };
-
-    let nextTrack = null;
-    try {
-      const queueRes = await fetch('https://api.spotify.com/v1/me/player/queue', {
+        .limit(1),
+      fetch('https://api.spotify.com/v1/me/player/queue', {
         headers: { Authorization: `Bearer ${token}` },
         cache: 'no-store',
-      });
-      if (queueRes.ok) {
-        const queueData = await queueRes.json();
+      })
+    ]);
+
+    if (dbResult.status === 'fulfilled' && dbResult.value.data && dbResult.value.data.length > 0) {
+      orderedBy = dbResult.value.data[0].sender_name;
+    }
+
+    if (queueResult.status === 'fulfilled' && queueResult.value.ok) {
+      try {
+        const queueData = await queueResult.value.json();
         const nextItem = queueData.queue?.[0];
         if (nextItem) {
           nextTrack = {
@@ -66,8 +62,14 @@ export async function GET(req: NextRequest) {
             artist: nextItem.artists.map((a: any) => a.name).join(', '),
           };
         }
-      }
-    } catch (e) {}
+      } catch (e) {}
+    }
+
+    const currentTrack = {
+      name: data.item.name,
+      artist: data.item.artists.map((a: any) => a.name).join(', '),
+      orderedBy: orderedBy,
+    };
 
     return NextResponse.json(
       { isPlaying: true, current: currentTrack, next: nextTrack, settings },
