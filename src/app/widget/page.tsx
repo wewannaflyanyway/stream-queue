@@ -71,7 +71,10 @@ export default function WidgetPage() {
   const bgColor = hexToRgba(s?.widget_bg_color || '#121212', s?.widget_opacity ?? 90);
   const textColor = s?.widget_text_color || '#ffffff';
   const accentColor = s?.widget_accent_color || '#1DB954';
-  const imageUrl = data.isPlaying && data.current?.cover ? data.current.cover : s?.widget_custom_image;
+  const rawImageUrl = data.isPlaying && data.current?.cover ? data.current.cover : s?.widget_custom_image;
+  const imageUrl = rawImageUrl && (rawImageUrl.includes('scdn.co') || rawImageUrl.includes('spotify'))
+    ? `/api/proxy-image?url=${encodeURIComponent(rawImageUrl)}`
+    : rawImageUrl;
 
   return (
     <>

@@ -487,8 +487,9 @@ export default function AdminPage() {
                   <div className="flex items-center gap-4 min-w-0">
                     <img
                       src={
-                        item.album_cover_url ||
-                        'https://placehold.co/64x64/121212/1DB954?text=♪'
+                        item.album_cover_url
+                        ? `/api/proxy-image?url=${encodeURIComponent(item.album_cover_url)}` 
+        : 'https://placehold.co/64x64/121212/1DB954?text=♪'
                       }
                       alt={item.track_name}
                       className="w-14 h-14 rounded-2xl object-cover shrink-0 bg-black/40"
