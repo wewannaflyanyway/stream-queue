@@ -105,7 +105,8 @@ export default function WidgetPage() {
           <div className="w-[600px] rounded-3xl border border-white/10 p-5 shadow-xl backdrop-blur-md flex items-center gap-5" style={{ backgroundColor: bgColor }}>
             <div className="w-20 h-20 rounded-2xl flex items-center justify-center shrink-0 bg-black/40 overflow-hidden border border-white/5">
               {s?.widget_custom_image ? (
-                <img src={s.widget_custom_image} alt="Logo" className="w-full h-full object-cover" />
+                <img key={s.widget_custom_image} src={s.widget_custom_image} alt="Logo" className="w-full h-full object-cover" />
+                
               ) : (
                 <Music className="w-10 h-10" style={{ color: accentColor }} />
               )}
@@ -124,7 +125,7 @@ export default function WidgetPage() {
             <div className="flex gap-6">
               <div className="w-24 h-24 rounded-2xl shrink-0 bg-black/40 overflow-hidden border border-white/5 flex items-center justify-center relative">
                 {imageUrl ? (
-                  <img src={imageUrl} alt="Cover" className="w-full h-full object-cover shadow-inner" />
+                  <img key={imageUrl} src={imageUrl} alt="Cover" className="w-full h-full object-cover shadow-inner" />
                 ) : (
                   <Music className="w-12 h-12" style={{ color: accentColor }} />
                 )}
