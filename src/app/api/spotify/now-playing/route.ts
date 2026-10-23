@@ -8,10 +8,10 @@ export async function GET(req: NextRequest) {
     const supabase = getServiceSupabase();
 
     const { data: settings } = await supabase
-      .from('stream_settings')
-      .select('widget_bg_color, widget_text_color, widget_accent_color, widget_opacity')
-      .eq('id', 1)
-      .single();
+          .from('stream_settings')
+          .select('widget_bg_color, widget_text_color, widget_accent_color, widget_opacity, widget_custom_image, widget_show_eq')
+          .eq('id', 1)
+          .single();
 
     const playerRes = await fetch('https://api.spotify.com/v1/me/player', {
       headers: { Authorization: `Bearer ${token}` },
@@ -60,16 +60,18 @@ export async function GET(req: NextRequest) {
           nextTrack = {
             name: nextItem.name,
             artist: nextItem.artists.map((a: any) => a.name).join(', '),
+            cover: nextItem.album?.images?.[0]?.url || null,
           };
         }
       } catch (e) {}
     }
 
     const currentTrack = {
-      name: data.item.name,
-      artist: data.item.artists.map((a: any) => a.name).join(', '),
-      orderedBy: orderedBy,
-    };
+          name: data.item.name,
+          artist: data.item.artists.map((a: any) => a.name).join(', '),
+          cover: data.item.album?.images?.[0]?.url || null, // Добавили обложку
+          orderedBy: orderedBy,
+        };
 
     return NextResponse.json(
       { isPlaying: true, current: currentTrack, next: nextTrack, settings },

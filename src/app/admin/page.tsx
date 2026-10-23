@@ -808,7 +808,27 @@ export default function AdminPage() {
                 />
               </div>
             </div>
+            <div className="col-span-1 md:col-span-2 border-t border-white/10 pt-6 mt-2">
+                <label className="block text-xs text-[#A7A7A7] mb-2">Ссылка на свою обложку-заглушку (URL картинки)</label>
+                <input
+                  type="text"
+                  placeholder="https://..."
+                  value={settings.widget_custom_image || ''}
+                  onChange={(e) => setSettings({ ...settings, widget_custom_image: e.target.value })}
+                  className="w-full px-4 py-2.5 rounded-2xl bg-black/40 border border-white/10 text-sm font-mono text-white"
+                />
+                <p className="text-[10px] text-[#A7A7A7] mt-1.5">Будет показываться, когда плеер на паузе или у трека нет обложки.</p>
+              </div>
 
+              <div className="col-span-1 md:col-span-2 flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={settings.widget_show_eq ?? true}
+                  onChange={(e) => setSettings({ ...settings, widget_show_eq: e.target.checked })}
+                  className="w-5 h-5 accent-[#1DB954]"
+                />
+                <label className="text-sm font-medium text-white">Показывать анимацию эквалайзера</label>
+              </div>
             <button
               type="submit"
               className="mt-6 px-6 py-3 rounded-2xl bg-[#1DB954] hover:bg-[#1ed760] text-black font-bold text-sm transition cursor-pointer"

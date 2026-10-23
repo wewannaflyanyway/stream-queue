@@ -6,6 +6,7 @@ import { Music, SkipForward, AlertCircle, User } from 'lucide-react';
 interface TrackInfo {
   name: string;
   artist: string;
+  cover?: string | null;
   orderedBy?: string | null;
 }
 
@@ -14,6 +15,8 @@ interface WidgetSettings {
   widget_text_color: string;
   widget_accent_color: string;
   widget_opacity: number;
+  widget_custom_image: string;
+  widget_show_eq: boolean;
 }
 
 interface NowPlayingData {
@@ -26,13 +29,11 @@ interface NowPlayingData {
 
 const hexToRgba = (hex: string, opacity: number) => {
   let r = 18, g = 18, b = 18;
-  if (hex) {
+  if (hex && hex.replace('#', '').length === 6) {
     const cleanHex = hex.replace('#', '');
-    if (cleanHex.length === 6) {
-      r = parseInt(cleanHex.substring(0, 2), 16);
-      g = parseInt(cleanHex.substring(2, 4), 16);
-      b = parseInt(cleanHex.substring(4, 6), 16);
-    }
+    r = parseInt(cleanHex.substring(0, 2), 16);
+    g = parseInt(cleanHex.substring(2, 4), 16);
+    b = parseInt(cleanHex.substring(4, 6), 16);
   }
   return `rgba(${r}, ${g}, ${b}, ${opacity / 100})`;
 };
@@ -40,9 +41,7 @@ const hexToRgba = (hex: string, opacity: number) => {
 export default function WidgetPage() {
   const [data, setData] = useState<NowPlayingData>({ isPlaying: false });
   const [clientError, setClientError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true); // <--- ДОБАВЬ ЭТУ СТРОЧКУ
-
-  // Счетчик неудачных запросов (чтобы игнорировать разовые просадки сети)
+  const [loading, setLoading] = useState(true);
   const failCountRef = useRef(0);
 
   useEffect(() => {
@@ -50,125 +49,109 @@ export default function WidgetPage() {
       try {
         const res = await fetch(`/api/spotify/now-playing?t=${Date.now()}`);
         if (!res.ok) throw new Error(`Ошибка сервера: ${res.status}`);
-        
         const json = await res.json();
-        
-        // Если сервер вернул ошибку внутри JSON (например, отвалился токен)
         if (json.error) throw new Error(json.error);
 
         setData(json);
         setClientError(null);
-        failCountRef.current = 0; // Сбрасываем счетчик
+        failCountRef.current = 0;
       } catch (err: any) {
         failCountRef.current += 1;
-        // НЕ стираем data. Оставляем на экране прошлый трек, чтобы виджет не моргал.
-        // Показываем ошибку только если Spotify лежит "наглухо" > 17 секунд
-        if (failCountRef.current >= 5) {
-          setClientError(err.message || 'Потеряно соединение с сервером');
-        }
+        if (failCountRef.current >= 5) setClientError(err.message || 'Потеряно соединение');
       } finally {
         setLoading(false);
       }
     };
-
     fetchData();
     const interval = setInterval(fetchData, 3500);
     return () => clearInterval(interval);
   }, []);
 
-  const bgColor = hexToRgba(data.settings?.widget_bg_color || '#121212', data.settings?.widget_opacity ?? 90);
-  const textColor = data.settings?.widget_text_color || '#ffffff';
-  const accentColor = data.settings?.widget_accent_color || '#1DB954';
+  const s = data.settings;
+  const bgColor = hexToRgba(s?.widget_bg_color || '#121212', s?.widget_opacity ?? 90);
+  const textColor = s?.widget_text_color || '#ffffff';
+  const accentColor = s?.widget_accent_color || '#1DB954';
+  
+  // Логика картинки: обложка трека -> кастомная ссылка -> иконка ноты
+  const imageUrl = data.isPlaying && data.current?.cover ? data.current.cover : s?.widget_custom_image;
 
   return (
     <>
       <style dangerouslySetInnerHTML={{__html: `
         body, html { background: transparent !important; }
-        .marquee-container {
-          overflow: hidden; white-space: nowrap; position: relative; padding-left: 2px;
-          mask-image: linear-gradient(to right, black 85%, transparent 100%);
-          -webkit-mask-image: linear-gradient(to right, black 85%, transparent 100%);
-        }
+        .marquee-container { overflow: hidden; white-space: nowrap; position: relative; padding-left: 2px; mask-image: linear-gradient(to right, black 85%, transparent 100%); -webkit-mask-image: linear-gradient(to right, black 85%, transparent 100%); }
         .marquee-content { display: inline-block; animation: marquee 15s linear infinite; padding-right: 60px; }
         .marquee-content.short { animation: none; padding-right: 0; }
         @keyframes marquee { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+        .eq-bar { width: 4px; border-radius: 2px; animation: eq 1.2s ease-in-out infinite; }
+        .eq-bar:nth-child(2) { animation-delay: 0.2s; }
+        .eq-bar:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes eq { 0%, 100% { height: 6px; } 50% { height: 16px; } }
       `}} />
 
       <div className="w-screen h-screen overflow-hidden flex items-start justify-start p-6">
-        
         {(clientError || data.error) && (
-          <div className="max-w-[600px] rounded-2xl bg-red-600/90 border border-red-400 p-5 text-white shadow-2xl backdrop-blur-md">
-            <div className="flex gap-3 items-start">
-              <AlertCircle className="w-7 h-7 shrink-0 mt-0.5" />
-              <div>
-                <p className="font-bold text-lg">Ошибка виджета:</p>
-                <p className="opacity-90 mt-1.5 font-mono break-all text-sm">{clientError || data.error}</p>
-              </div>
+          <div className="w-[600px] rounded-2xl bg-red-600/90 border border-red-400 p-5 text-white shadow-2xl backdrop-blur-md flex gap-3 items-start">
+            <AlertCircle className="w-7 h-7 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold text-lg">Ошибка виджета</p>
+              <p className="opacity-90 mt-1.5 text-sm">{clientError || data.error}</p>
             </div>
           </div>
         )}
 
         {!clientError && !data.error && !data.isPlaying && (
-          <div 
-            className="w-[600px] rounded-3xl border border-white/10 p-5 shadow-xl backdrop-blur-md"
-            style={{ backgroundColor: bgColor }}
-          >
-            <div className="flex items-center gap-5">
-              <div className="w-20 h-20 rounded-2xl flex items-center justify-center border shrink-0" style={{ backgroundColor: `${accentColor}1A`, borderColor: `${accentColor}33` }}>
+          <div className="w-[600px] rounded-3xl border border-white/10 p-5 shadow-xl backdrop-blur-md flex items-center gap-5" style={{ backgroundColor: bgColor }}>
+            <div className="w-20 h-20 rounded-2xl flex items-center justify-center shrink-0 bg-black/40 overflow-hidden border border-white/5">
+              {s?.widget_custom_image ? (
+                <img src={s.widget_custom_image} alt="Logo" className="w-full h-full object-cover" />
+              ) : (
                 <Music className="w-10 h-10" style={{ color: accentColor }} />
-              </div>
-              <div>
-                <p className="font-bold text-xl" style={{ color: textColor }}>Музыка на паузе</p>
-                <p className="text-base mt-1" style={{ color: textColor, opacity: 0.6 }}>Включите трек в Spotify</p>
-              </div>
+              )}
+            </div>
+            <div>
+              <p className="font-bold text-xl" style={{ color: textColor }}>Музыка на паузе</p>
+              <p className="text-base mt-1" style={{ color: textColor, opacity: 0.6 }}>Включите трек в Spotify</p>
             </div>
           </div>
         )}
 
         {!clientError && !data.error && data.isPlaying && data.current && (
-          <div 
-            className="w-[600px] rounded-3xl border border-white/10 p-5 shadow-2xl backdrop-blur-md"
-            style={{ backgroundColor: bgColor }}
-          >
-            <div className="flex items-center gap-6">
-              <div className="w-24 h-24 rounded-2xl flex items-center justify-center border shrink-0 shadow-inner" style={{ backgroundColor: `${accentColor}1A`, borderColor: `${accentColor}33` }}>
+          <div className="w-[600px] rounded-3xl border border-white/10 p-5 shadow-2xl backdrop-blur-md flex gap-6" style={{ backgroundColor: bgColor }}>
+            <div className="w-24 h-24 rounded-2xl shrink-0 bg-black/40 overflow-hidden border border-white/5 flex items-center justify-center relative">
+              {imageUrl ? (
+                <img src={imageUrl} alt="Cover" className="w-full h-full object-cover shadow-inner" />
+              ) : (
                 <Music className="w-12 h-12" style={{ color: accentColor }} />
-              </div>
+              )}
+            </div>
 
-              {/* Жесткая минимальная высота для устранения прыжков виджета */}
-              <div className="flex-1 min-w-0 flex flex-col justify-center min-h-[100px]">
-                <div className="marquee-container w-full">
-                  <div className={`marquee-content ${data.current.name.length < 26 ? 'short' : ''}`}>
-                    <span className="font-bold text-2xl tracking-tight mr-12" style={{ color: textColor }}>
-                      {data.current.name}
-                    </span>
-                    {data.current.name.length >= 26 && (
-                      <span className="font-bold text-2xl tracking-tight" style={{ color: textColor }}>
-                        {data.current.name}
-                      </span>
-                    )}
+            <div className="flex-1 min-w-0 flex flex-col justify-center">
+              <div className="flex items-center gap-3 w-full">
+                <div className="marquee-container flex-1">
+                  <div className={`marquee-content ${data.current.name.length < 24 ? 'short' : ''}`}>
+                    <span className="font-bold text-2xl tracking-tight mr-12" style={{ color: textColor }}>{data.current.name}</span>
+                    {data.current.name.length >= 24 && <span className="font-bold text-2xl tracking-tight" style={{ color: textColor }}>{data.current.name}</span>}
                   </div>
                 </div>
-                
-                <p className="text-base truncate mt-1" style={{ color: textColor, opacity: 0.7 }}>
-                  {data.current.artist}
-                </p>
-
-                {/* Блок заказчика (если нет, место не схлопывается из-за min-h-[100px]) */}
-                {data.current.orderedBy && (
-                  <div className="mt-2 flex items-center gap-1.5 text-sm font-semibold truncate" style={{ color: accentColor }}>
-                    <User className="w-4 h-4" />
-                    <span>Заказ от: {data.current.orderedBy}</span>
+                {s?.widget_show_eq && (
+                  <div className="flex items-end justify-center gap-1 w-6 h-5 shrink-0 mb-1">
+                    <div className="eq-bar" style={{ backgroundColor: accentColor }}></div>
+                    <div className="eq-bar" style={{ backgroundColor: accentColor }}></div>
+                    <div className="eq-bar" style={{ backgroundColor: accentColor }}></div>
                   </div>
                 )}
+              </div>
+              
+              <p className="text-base truncate mt-0.5" style={{ color: textColor, opacity: 0.7 }}>{data.current.artist}</p>
 
-                {data.next && (
-                  <div className="mt-2.5 flex items-center gap-2 border-t pt-2" style={{ borderColor: `${textColor}20` }}>
-                    <SkipForward className="w-5 h-5 shrink-0" style={{ color: accentColor }} />
-                    <p className="text-sm truncate" style={{ color: textColor, opacity: 0.6 }}>
-                      <span className="font-medium">Далее:</span> {data.next.artist} — {data.next.name}
-                    </p>
-                  </div>
+              {/* Фиксированная высота для заказчика, предотвращающая прыжки */}
+              <div className="h-6 mt-1 flex items-center gap-1.5 text-sm font-semibold truncate" style={{ color: accentColor }}>
+                {data.current.orderedBy && (
+                  <>
+                    <User className="w-4 h-4" />
+                    <span>Заказ от: {data.current.orderedBy}</span>
+                  </>
                 )}
               </div>
             </div>
