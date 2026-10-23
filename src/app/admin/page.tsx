@@ -65,6 +65,7 @@ export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<'queue' | 'history' | 'settings' | 'widget'>('queue');
   const [toast, setToast] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   const soundEnabledRef = useRef(true);
 
@@ -234,7 +235,8 @@ export default function AdminPage() {
       showToast(e.message, 'err');
     }
   };
-// Очистить историю
+
+  // Очистить историю
   const handleClearHistory = async () => {
     if (!confirm('Точно удалить всю историю одобренных и отклоненных треков? Это действие необратимо.')) return;
     try {
@@ -243,6 +245,25 @@ export default function AdminPage() {
       setRequests((prev) => prev.filter((r) => r.status === 'pending'));
     } catch (e: any) {
       showToast(e.message, 'err');
+    }
+  };
+
+  // Экспорт плейлиста
+  const handleExportPlaylist = async () => {
+    setIsExporting(true);
+    try {
+      const res = await fetch('/api/admin/export', { method: 'POST' });
+      const data = await res.json();
+      if (data.url) {
+        showToast('Плейлист успешно создан!');
+        window.open(data.url, '_blank');
+      } else {
+        showToast('Ошибка: ' + (data.error || 'Неизвестная ошибка'), 'err');
+      }
+    } catch (e) {
+      showToast('Сбой при экспорте', 'err');
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -543,18 +564,29 @@ export default function AdminPage() {
        {/* ВКЛАДКА 2: ИСТОРИЯ СТРИМА */}
         {activeTab === 'history' && (
           <div className="rounded-3xl bg-white/[0.04] backdrop-blur-xl border border-white/[0.08] overflow-hidden">
-            {/* Шапка с кнопкой очистки */}
+            {/* Шапка с кнопкой очистки и экспорта */}
             <div className="p-4 border-b border-white/[0.08] flex items-center justify-between bg-black/20">
               <span className="text-sm font-semibold text-white">Управление историей</span>
-              <button
-                type="button"
-                onClick={handleClearHistory}
-                disabled={approvedHistory.length === 0}
-                className="px-3 py-1.5 rounded-xl bg-[#E91429]/15 hover:bg-[#E91429]/25 border border-[#E91429]/30 text-[#ff6b78] text-xs font-semibold flex items-center gap-2 transition disabled:opacity-40"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                Очистить историю
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleExportPlaylist}
+                  disabled={isExporting || approvedHistory.length === 0}
+                  className="px-3 py-1.5 rounded-xl bg-[#1DB954] hover:bg-[#1ed760] text-black text-xs font-bold flex items-center gap-2 transition disabled:opacity-50 cursor-pointer"
+                >
+                  {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ListMusic className="w-3.5 h-3.5" />}
+                  {isExporting ? 'Создаем...' : 'Экспорт в плейлист'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearHistory}
+                  disabled={approvedHistory.length === 0}
+                  className="px-3 py-1.5 rounded-xl bg-[#E91429]/15 hover:bg-[#E91429]/25 border border-[#E91429]/30 text-[#ff6b78] text-xs font-semibold flex items-center gap-2 transition disabled:opacity-40 cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Очистить историю
+                </button>
+              </div>
             </div>
 
             {approvedHistory.length === 0 ? (

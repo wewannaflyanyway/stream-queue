@@ -71,8 +71,6 @@ export default function WidgetPage() {
   const bgColor = hexToRgba(s?.widget_bg_color || '#121212', s?.widget_opacity ?? 90);
   const textColor = s?.widget_text_color || '#ffffff';
   const accentColor = s?.widget_accent_color || '#1DB954';
-  
-  // Логика картинки: обложка трека -> кастомная ссылка -> иконка ноты
   const imageUrl = data.isPlaying && data.current?.cover ? data.current.cover : s?.widget_custom_image;
 
   return (
@@ -117,44 +115,70 @@ export default function WidgetPage() {
         )}
 
         {!clientError && !data.error && data.isPlaying && data.current && (
-          <div className="w-[600px] rounded-3xl border border-white/10 p-5 shadow-2xl backdrop-blur-md flex gap-6" style={{ backgroundColor: bgColor }}>
-            <div className="w-24 h-24 rounded-2xl shrink-0 bg-black/40 overflow-hidden border border-white/5 flex items-center justify-center relative">
-              {imageUrl ? (
-                <img src={imageUrl} alt="Cover" className="w-full h-full object-cover shadow-inner" />
-              ) : (
-                <Music className="w-12 h-12" style={{ color: accentColor }} />
-              )}
+          <div className="w-[600px] rounded-3xl border border-white/10 p-5 shadow-2xl backdrop-blur-md flex flex-col" style={{ backgroundColor: bgColor }}>
+            
+            {/* Основной трек */}
+            <div className="flex gap-6">
+              <div className="w-24 h-24 rounded-2xl shrink-0 bg-black/40 overflow-hidden border border-white/5 flex items-center justify-center relative">
+                {imageUrl ? (
+                  <img src={imageUrl} alt="Cover" className="w-full h-full object-cover shadow-inner" />
+                ) : (
+                  <Music className="w-12 h-12" style={{ color: accentColor }} />
+                )}
+              </div>
+
+              <div className="flex-1 min-w-0 flex flex-col justify-center">
+                <div className="flex items-center gap-3 w-full">
+                  <div className="marquee-container flex-1">
+                    <div className={`marquee-content ${data.current.name.length < 24 ? 'short' : ''}`}>
+                      <span className="font-bold text-2xl tracking-tight mr-12" style={{ color: textColor }}>{data.current.name}</span>
+                      {data.current.name.length >= 24 && <span className="font-bold text-2xl tracking-tight" style={{ color: textColor }}>{data.current.name}</span>}
+                    </div>
+                  </div>
+                  {s?.widget_show_eq && (
+                    <div className="flex items-end justify-center gap-1 w-6 h-5 shrink-0 mb-1">
+                      <div className="eq-bar" style={{ backgroundColor: accentColor }}></div>
+                      <div className="eq-bar" style={{ backgroundColor: accentColor }}></div>
+                      <div className="eq-bar" style={{ backgroundColor: accentColor }}></div>
+                    </div>
+                  )}
+                </div>
+                
+                <p className="text-base truncate mt-0.5" style={{ color: textColor, opacity: 0.7 }}>{data.current.artist}</p>
+
+                <div className="h-6 mt-1 flex items-center gap-1.5 text-sm font-semibold truncate" style={{ color: accentColor }}>
+                  {data.current.orderedBy && (
+                    <>
+                      <User className="w-4 h-4" />
+                      <span>Заказ от: {data.current.orderedBy}</span>
+                    </>
+                  )}
+                </div>
+              </div>
             </div>
 
-            <div className="flex-1 min-w-0 flex flex-col justify-center">
-              <div className="flex items-center gap-3 w-full">
-                <div className="marquee-container flex-1">
-                  <div className={`marquee-content ${data.current.name.length < 24 ? 'short' : ''}`}>
-                    <span className="font-bold text-2xl tracking-tight mr-12" style={{ color: textColor }}>{data.current.name}</span>
-                    {data.current.name.length >= 24 && <span className="font-bold text-2xl tracking-tight" style={{ color: textColor }}>{data.current.name}</span>}
+            {/* Следующий трек */}
+            {data.next && (
+              <>
+                <div className="w-full h-px bg-white/10 my-4" />
+                <div className="flex items-center gap-3 px-1">
+                  <SkipForward className="w-5 h-5 shrink-0" style={{ color: accentColor }} />
+                  <div className="flex-1 min-w-0 flex items-center justify-between text-sm">
+                    <div className="truncate" style={{ color: textColor, opacity: 0.8 }}>
+                      <span className="font-semibold mr-1.5" style={{ color: textColor, opacity: 1 }}>Далее:</span>
+                      {data.next.artist} — {data.next.name}
+                    </div>
+                    {data.next.orderedBy && (
+                      <div className="shrink-0 flex items-center gap-1.5 ml-3 font-medium" style={{ color: accentColor }}>
+                        <User className="w-3.5 h-3.5" />
+                        <span>{data.next.orderedBy}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
-                {s?.widget_show_eq && (
-                  <div className="flex items-end justify-center gap-1 w-6 h-5 shrink-0 mb-1">
-                    <div className="eq-bar" style={{ backgroundColor: accentColor }}></div>
-                    <div className="eq-bar" style={{ backgroundColor: accentColor }}></div>
-                    <div className="eq-bar" style={{ backgroundColor: accentColor }}></div>
-                  </div>
-                )}
-              </div>
-              
-              <p className="text-base truncate mt-0.5" style={{ color: textColor, opacity: 0.7 }}>{data.current.artist}</p>
+              </>
+            )}
 
-              {/* Фиксированная высота для заказчика, предотвращающая прыжки */}
-              <div className="h-6 mt-1 flex items-center gap-1.5 text-sm font-semibold truncate" style={{ color: accentColor }}>
-                {data.current.orderedBy && (
-                  <>
-                    <User className="w-4 h-4" />
-                    <span>Заказ от: {data.current.orderedBy}</span>
-                  </>
-                )}
-              </div>
-            </div>
           </div>
         )}
       </div>

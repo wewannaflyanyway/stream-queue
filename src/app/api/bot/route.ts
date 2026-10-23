@@ -2,8 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServiceSupabase } from '@/lib/supabase';
 import { getStreamerAccessToken } from '@/lib/spotify';
 
-export const dynamic = 'force-dynamic';
-
 export async function GET(req: NextRequest) {
   try {
     const query = req.nextUrl.searchParams.get('query');
@@ -12,7 +10,7 @@ export async function GET(req: NextRequest) {
     // 1. Проверка на пустую команду !sr (выводим инструкцию)
     if (!query || query.trim() === '') {
       return new NextResponse(
-        '👋 Привет! Заказывай музыку командой !sr <название или ссылка>. Полезное: !song (текущий трек) | !wrongsong (отменить заказ).', 
+        '👋 Привет! Заказывай музыку командой !sr <название или ссылка Spotify>. Полезное: !song (текущий трек) | !wrongsong (отменить свой заказ).', 
         { status: 200 }
       );
     }
