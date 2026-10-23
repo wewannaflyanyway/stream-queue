@@ -2,8 +2,6 @@ import { NextResponse } from 'next/server';
 import { getStreamerAccessToken } from '@/lib/spotify';
 import { getServiceSupabase } from '@/lib/supabase';
 
-export const dynamic = 'force-dynamic';
-
 export async function GET() {
   try {
     const token = await getStreamerAccessToken();
