@@ -1,26 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function GET(req: NextRequest) {
-  const url = req.nextUrl.searchParams.get('url');
-
-  if (!url || !url.startsWith('https://i.scdn.co/')) {
-    return new NextResponse('Invalid URL', { status: 400 });
-  }
-
   try {
-    const response = await fetch(url, { cache: 'force-cache' });
-    if (!response.ok) throw new Error('Failed to fetch image');
+    const url = req.nextUrl.searchParams.get('url');
+
+    if (!url) {
+      return new NextResponse('Missing url parameter', { status: 400 });
+    }
+
+    const response = await fetch(url, { cache: 'no-store' });
+
+    if (!response.ok) {
+      return new NextResponse('Failed to fetch image', { status: response.status });
+    }
 
     const arrayBuffer = await response.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
+    const contentType = response.headers.get('content-type') || 'image/jpeg';
+
     return new NextResponse(buffer, {
+      status: 200,
       headers: {
-        'Content-Type': response.headers.get('Content-Type') || 'image/jpeg',
-        'Cache-Control': 'public, max-age=86400',
+        'Content-Type': contentType,
+        'Cache-Control': 'public, max-age=86400', 
       },
     });
   } catch (error) {
-    return new NextResponse('Error fetching image', { status: 500 });
+    return new NextResponse('Internal Server Error', { status: 500 });
   }
 }
