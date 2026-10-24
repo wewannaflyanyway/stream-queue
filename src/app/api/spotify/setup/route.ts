@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID!;
 const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET!;
-const REDIRECT_URI = 'http://127.0.0.1:3000/api/spotify/setup';
+const REDIRECT_URI = process.env.SPOTIFY_REDIRECT_URI || 'http://127.0.0.1:3000/api/spotify/setup';
 
 export async function GET(req: NextRequest) {
   const code = req.nextUrl.searchParams.get('code');

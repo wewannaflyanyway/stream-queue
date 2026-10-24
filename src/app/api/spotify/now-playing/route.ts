@@ -7,14 +7,12 @@ export async function GET() {
     const token = await getStreamerAccessToken();
     const supabase = getServiceSupabase();
 
-    // 1. Получаем настройки виджета
     const { data: settings } = await supabase
       .from('stream_settings')
       .select('widget_bg_color, widget_text_color, widget_accent_color, widget_opacity, widget_custom_image, widget_show_eq')
       .eq('id', 1)
       .single();
 
-    // 2. Получаем текущий трек
     const playerRes = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
       headers: { Authorization: `Bearer ${token}` },
       cache: 'no-store',
@@ -24,12 +22,20 @@ export async function GET() {
       return NextResponse.json({ isPlaying: false, settings });
     }
 
-    const data = await playerRes.json();
+    const data = (await playerRes.json()) as {
+      item?: {
+        uri: string;
+        name: string;
+        artists?: Array<{ name: string }>;
+        album?: { images?: Array<{ url?: string }> };
+      };
+      is_playing?: boolean;
+    };
+
     if (!data || !data.item) {
       return NextResponse.json({ isPlaying: false, settings });
     }
 
-    // Улучшенный поиск никнейма для играющего трека (без ограничений по времени)
     const { data: currentDbData } = await supabase
       .from('song_requests')
       .select('sender_name')
@@ -39,12 +45,11 @@ export async function GET() {
 
     const current = {
       name: data.item.name,
-      artist: data.item.artists.map((a: any) => a.name).join(', '),
+      artist: (data.item.artists || []).map((artist) => artist.name).join(', '),
       cover: data.item.album?.images?.[0]?.url || null,
       orderedBy: currentDbData?.[0]?.sender_name || null,
     };
 
-    // 3. Получаем следующий трек напрямую из очереди Spotify
     const queueRes = await fetch('https://api.spotify.com/v1/me/player/queue', {
       headers: { Authorization: `Bearer ${token}` },
       cache: 'no-store',
@@ -52,10 +57,17 @@ export async function GET() {
 
     let next = null;
     if (queueRes.ok) {
-      const queueData = await queueRes.json();
+      const queueData = (await queueRes.json()) as {
+        queue?: Array<{
+          uri: string;
+          name: string;
+          artists?: Array<{ name: string }>;
+        }>;
+      };
+
       if (queueData.queue && queueData.queue.length > 0) {
         const nextItem = queueData.queue[0];
-        
+
         const { data: nextDbData } = await supabase
           .from('song_requests')
           .select('sender_name')
@@ -65,21 +77,23 @@ export async function GET() {
 
         next = {
           name: nextItem.name,
-          artist: nextItem.artists.map((a: any) => a.name).join(', '),
+          artist: (nextItem.artists || []).map((artist) => artist.name).join(', '),
           orderedBy: nextDbData?.[0]?.sender_name || null,
         };
       }
     }
 
     return NextResponse.json({
-      isPlaying: data.is_playing,
+      isPlaying: !!data.is_playing,
       current,
       next,
       settings,
     });
-
   } catch (error) {
     console.error('Widget API Error:', error);
-    return NextResponse.json({ error: 'Ошибка сервера' }, { status: 500 });
+    return NextResponse.json({
+      isPlaying: false,
+      error: 'Spotify недоступен. Пауза/перезапуск виджета через пару секунд.',
+    }, { status: 200 });
   }
 }

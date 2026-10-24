@@ -41,12 +41,11 @@ const hexToRgba = (hex: string, opacity: number) => {
 export default function WidgetPage() {
   const [data, setData] = useState<NowPlayingData>({ isPlaying: false });
   const [clientError, setClientError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   const failCountRef = useRef(0);
 
   useEffect(() => {
     let isMounted = true;
-    let timeoutId: NodeJS.Timeout;
+    let timeoutId: number | undefined;
 
     const fetchData = async () => {
       const controller = new AbortController();
@@ -55,20 +54,22 @@ export default function WidgetPage() {
       try {
         const res = await fetch(`/api/spotify/now-playing?t=${Date.now()}`, {
           signal: controller.signal,
-          cache: 'no-store'
+          cache: 'no-store',
         });
         clearTimeout(abortTimer);
 
-        if (!res.ok) throw new Error(`Ошибка сервера: ${res.status}`);
         const json = await res.json();
-        if (json.error) throw new Error(json.error);
 
         if (isMounted) {
           setData(json);
-          setClientError(null);
+          if (json.error) {
+            setClientError(json.error);
+          } else {
+            setClientError(null);
+          }
           failCountRef.current = 0;
         }
-      } catch (err: any) {
+      } catch {
         clearTimeout(abortTimer);
         if (isMounted) {
           failCountRef.current += 1;
@@ -78,8 +79,7 @@ export default function WidgetPage() {
         }
       } finally {
         if (isMounted) {
-          setLoading(false);
-          timeoutId = setTimeout(fetchData, 3500);
+          timeoutId = window.setTimeout(fetchData, 3500);
         }
       }
     };
@@ -88,7 +88,7 @@ export default function WidgetPage() {
 
     return () => {
       isMounted = false;
-      clearTimeout(timeoutId);
+      if (timeoutId) clearTimeout(timeoutId);
     };
   }, []);
 

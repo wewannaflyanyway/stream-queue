@@ -4,14 +4,24 @@ const REFRESH_TOKEN = process.env.SPOTIFY_REFRESH_TOKEN;
 
 const BASIC_AUTH = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
 
-// Используем globalThis, чтобы кэш выживал при пересборках внутри одного контейнера Vercel
-const globalForSpotify = globalThis as unknown as {
-  searchTokenCache: { token: string; expiresAt: number } | null;
-  streamerTokenCache: { token: string; expiresAt: number } | null;
+type SpotifyTokenCache = { token: string; expiresAt: number };
+
+type SpotifyTrack = {
+  id: string;
+  uri: string;
+  name: string;
+  artist: string;
+  albumCover: string;
+  durationMs: number;
+  isExplicit: boolean;
 };
 
-// Вспомогательная обертка с жестким таймаутом 5 секунд
-async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 5000) {
+const globalForSpotify = globalThis as unknown as {
+  searchTokenCache: SpotifyTokenCache | null;
+  streamerTokenCache: SpotifyTokenCache | null;
+};
+
+export async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 5000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -21,7 +31,13 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutM
   }
 }
 
-// 1. Получение токена для поиска (Client Credentials Flow)
+function getSpotifyErrorMessage(res: Response) {
+  if (res.status === 404) return 'NO_ACTIVE_DEVICE';
+  if (res.status === 401) return 'SPOTIFY_AUTH_ERROR';
+  if (res.status === 429) return 'SPOTIFY_RATE_LIMITED';
+  return `SPOTIFY_API_ERROR:${res.status}`;
+}
+
 export async function getClientCredentialsToken(): Promise<string> {
   if (globalForSpotify.searchTokenCache && Date.now() < globalForSpotify.searchTokenCache.expiresAt) {
     return globalForSpotify.searchTokenCache.token;
@@ -41,16 +57,21 @@ export async function getClientCredentialsToken(): Promise<string> {
     throw new Error('Ошибка получения токена поиска Spotify');
   }
 
-  const data = await res.json();
+  const data = (await res.json()) as { access_token?: string };
+  const accessToken = data.access_token;
+
+  if (!accessToken) {
+    throw new Error('Spotify token missing from response');
+  }
+
   globalForSpotify.searchTokenCache = {
-    token: data.access_token,
+    token: accessToken,
     expiresAt: Date.now() + 50 * 60 * 1000,
   };
 
-  return data.access_token;
+  return accessToken;
 }
 
-// 2. Получение токена стримера для управления плеером (Refresh Token Flow)
 export async function getStreamerAccessToken(): Promise<string> {
   if (globalForSpotify.streamerTokenCache && Date.now() < globalForSpotify.streamerTokenCache.expiresAt) {
     return globalForSpotify.streamerTokenCache.token;
@@ -74,20 +95,26 @@ export async function getStreamerAccessToken(): Promise<string> {
   });
 
   if (!res.ok) {
-    throw new Error('Не удалось обновить токен стримера Spotify');
+    const reason = getSpotifyErrorMessage(res);
+    throw new Error(reason === 'NO_ACTIVE_DEVICE' ? 'NO_ACTIVE_DEVICE' : 'Не удалось обновить токен стримера Spotify');
   }
 
-  const data = await res.json();
+  const data = (await res.json()) as { access_token?: string };
+  const accessToken = data.access_token;
+
+  if (!accessToken) {
+    throw new Error('Spotify streamer token missing from response');
+  }
+
   globalForSpotify.streamerTokenCache = {
-    token: data.access_token,
+    token: accessToken,
     expiresAt: Date.now() + 50 * 60 * 1000,
   };
 
-  return data.access_token;
+  return accessToken;
 }
 
-// 3. Поиск треков по каталогу Spotify
-export async function searchSpotifyTracks(query: string) {
+export async function searchSpotifyTracks(query: string): Promise<SpotifyTrack[]> {
   const token = await getClientCredentialsToken();
   const url = `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=5`;
 
@@ -100,19 +127,33 @@ export async function searchSpotifyTracks(query: string) {
     throw new Error('Ошибка при поиске треков в Spotify');
   }
 
-  const data = await res.json();
-  return (data.tracks?.items || []).map((track: any) => ({
+  const data = (await res.json()) as {
+    tracks?: {
+      items?: Array<{
+        id: string;
+        uri: string;
+        name: string;
+        explicit: boolean;
+        duration_ms: number;
+        artists: Array<{ name: string }>;
+        album: {
+          images?: Array<{ url?: string }>;
+        };
+      }>;
+    };
+  };
+
+  return (data.tracks?.items || []).map((track) => ({
     id: track.id,
     uri: track.uri,
     name: track.name,
-    artist: track.artists.map((a: any) => a.name).join(', '),
+    artist: track.artists.map((artist) => artist.name).join(', '),
     albumCover: track.album.images?.[1]?.url || track.album.images?.[0]?.url || '',
     durationMs: track.duration_ms,
     isExplicit: track.explicit,
   }));
 }
 
-// 4. Добавление трека в очередь воспроизведения стримера
 export async function addTrackToSpotifyQueue(spotifyUri: string) {
   const token = await getStreamerAccessToken();
   const url = `https://api.spotify.com/v1/me/player/queue?uri=${encodeURIComponent(spotifyUri)}`;
@@ -133,13 +174,12 @@ export async function addTrackToSpotifyQueue(spotifyUri: string) {
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`Ошибка Spotify API (${res.status}): ${errText}`);
+    throw new Error(`Ошибка Spotify API (${res.status}): ${errText || getSpotifyErrorMessage(res)}`);
   }
 
   return true;
 }
 
-// 5. Скип текущего трека в плеере стримера
 export async function skipSpotifyTrack() {
   const token = await getStreamerAccessToken();
   const res = await fetchWithTimeout('https://api.spotify.com/v1/me/player/next', {
@@ -150,6 +190,10 @@ export async function skipSpotifyTrack() {
 
   if (res.status === 404) {
     throw new Error('NO_ACTIVE_DEVICE');
+  }
+
+  if (res.status === 401) {
+    globalForSpotify.streamerTokenCache = null;
   }
 
   if (!res.ok) {
