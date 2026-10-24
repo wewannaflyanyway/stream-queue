@@ -29,12 +29,12 @@ export async function GET() {
       return NextResponse.json({ isPlaying: false, settings });
     }
 
+    // Улучшенный поиск никнейма для играющего трека (без ограничений по времени)
     const { data: currentDbData } = await supabase
       .from('song_requests')
       .select('sender_name')
       .eq('spotify_uri', data.item.uri)
       .in('status', ['approved', 'played'])
-      .order('updated_at', { ascending: false })
       .limit(1);
 
     const current = {
@@ -61,7 +61,6 @@ export async function GET() {
           .select('sender_name')
           .eq('spotify_uri', nextItem.uri)
           .in('status', ['approved', 'pending'])
-          .order('created_at', { ascending: false })
           .limit(1);
 
         next = {

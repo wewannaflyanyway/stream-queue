@@ -167,15 +167,27 @@ export default function AdminPage() {
   }, [isAuthorized]);
 
   // Универсальный вызов API админки
-  const callAdminApi = async (action: string, payload?: any) => {
-    const res = await fetch('/api/admin', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin, action, payload }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Ошибка операции');
-    return data;
+  const callAdminApi = async (action: string, payload: any = {}, customPin?: string) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    try {
+      const res = await fetch('/api/admin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: customPin ?? pin, action, payload }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Ошибка запроса');
+      return data;
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      if (err.name === 'AbortError') {
+        throw new Error('Сервер долго не отвечает (таймаут 8 сек). Попробуй ещё раз.');
+      }
+      throw err;
+    }
   };
 
   // Быстрые тумблеры в шапке
@@ -190,25 +202,42 @@ export default function AdminPage() {
     }
   };
 
-  // Одобрить трек
+  // Одобрить трек (с мгновенным скрытием из очереди)
   const handleApprove = async (reqItem: any) => {
     setLoadingId(reqItem.id);
+    const previousRequests = [...requests];
+    
+    // Мгновенно переводим трек в статус approved на экране, не дожидаясь ответа сервера
+    setRequests((prev) =>
+      prev.map((r) => (r.id === reqItem.id ? { ...r, status: 'approved' } : r))
+    );
+
     try {
       await callAdminApi('approve', { id: reqItem.id, spotify_uri: reqItem.spotify_uri });
       showToast(`Добавлено в Spotify: ${reqItem.track_name}`);
     } catch (e: any) {
+      // Если произошла ошибка — возвращаем карточку обратно в очередь
+      setRequests(previousRequests);
       showToast(e.message, 'err');
     } finally {
       setLoadingId(null);
     }
   };
 
-  // Отклонить трек
+  // Отклонить трек (с мгновенным скрытием из очереди)
   const handleReject = async (id: string) => {
     setLoadingId(id);
+    const previousRequests = [...requests];
+
+    setRequests((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, status: 'rejected' } : r))
+    );
+
     try {
       await callAdminApi('reject', { id });
+      showToast('Заявка отклонена');
     } catch (e: any) {
+      setRequests(previousRequests);
       showToast(e.message, 'err');
     } finally {
       setLoadingId(null);
@@ -224,14 +253,17 @@ export default function AdminPage() {
       showToast(e.message, 'err');
     }
   };
-
-  // Panic Button: Очистить очередь
+  
+  // Panic Button: Очистить очередь (с мгновенным скрытием)
   const handleClearQueue = async () => {
     if (!confirm('Точно отклонить ВСЕ ожидающие треки в очереди?')) return;
+    const previousRequests = [...requests];
+    setRequests((prev) => prev.map((r) => (r.status === 'pending' ? { ...r, status: 'rejected' } : r)));
     try {
       await callAdminApi('clear_queue');
       showToast('Очередь ожидания очищена');
     } catch (e: any) {
+      setRequests(previousRequests);
       showToast(e.message, 'err');
     }
   };
@@ -485,15 +517,9 @@ export default function AdminPage() {
                   className="rounded-3xl bg-white/[0.04] backdrop-blur-xl border border-white/[0.08] p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition hover:border-white/[0.15]"
                 >
                   <div className="flex items-center gap-4 min-w-0">
-                    <img
-                      src={
-                        item.album_cover_url
-                        ? `/api/proxy-image?url=${encodeURIComponent(item.album_cover_url)}` 
-        : 'https://placehold.co/64x64/121212/1DB954?text=♪'
-                      }
-                      alt={item.track_name}
-                      className="w-14 h-14 rounded-2xl object-cover shrink-0 bg-black/40"
-                    />
+                    <div className="w-14 h-14 rounded-2xl bg-[#1DB954]/10 border border-[#1DB954]/20 flex items-center justify-center text-[#1DB954] shrink-0">
+                      <ListMusic className="w-6 h-6" />
+                    </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="font-bold text-base text-white truncate">
@@ -599,11 +625,9 @@ export default function AdminPage() {
                 {approvedHistory.map((item) => (
                   <div key={item.id} className="p-4 flex items-center justify-between gap-4">
                     <div className="flex items-center gap-3 min-w-0">
-                      <img
-                        src={item.album_cover_url}
-                        alt={item.track_name}
-                        className="w-10 h-10 rounded-xl object-cover"
-                      />
+                      <div className="w-10 h-10 rounded-xl bg-[#1DB954]/10 border border-[#1DB954]/20 flex items-center justify-center text-[#1DB954] shrink-0">
+                        <ListMusic className="w-5 h-5" />
+                      </div>
                       <div className="min-w-0">
                         <p className="text-sm font-semibold text-white truncate">
                           {item.track_name}

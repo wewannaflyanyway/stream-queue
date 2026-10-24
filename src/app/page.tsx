@@ -138,7 +138,7 @@ export default function ViewerPage() {
     };
   }, []);
 
-// 3. Дебаунс-поиск по Spotify (300 мс) с отменой устаревших запросов
+  // 3. Дебаунс-поиск по Spotify (450 мс) с отменой устаревших запросов и таймаутом
   useEffect(() => {
     const trimmed = query.trim();
     if (selectedTrack || trimmed.length < 2) {
@@ -151,17 +151,21 @@ export default function ViewerPage() {
     setIsSearching(true);
 
     const handler = setTimeout(async () => {
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
       try {
         const res = await fetch(
           `/api/spotify/search?q=${encodeURIComponent(trimmed)}&t=${Date.now()}`,
           { signal: controller.signal, cache: 'no-store' }
         );
+        clearTimeout(timeoutId);
+        if (!res.ok) throw new Error('Search failed');
         const data = await res.json();
         if (!controller.signal.aborted) {
           setResults(data.tracks || []);
         }
       } catch (err: any) {
-        if (err?.name !== 'AbortError') {
+        clearTimeout(timeoutId);
+        if (!controller.signal.aborted && err?.name !== 'AbortError') {
           setResults([]);
         }
       } finally {
@@ -169,7 +173,7 @@ export default function ViewerPage() {
           setIsSearching(false);
         }
       }
-    }, 300);
+    }, 450);
 
     return () => {
       clearTimeout(handler);
@@ -361,7 +365,7 @@ export default function ViewerPage() {
                         )}
                       </div>
 
-                      {/* Выпадающий список результатов */}
+                      {/* Выпадающий список результатов (Без тяжелых картинок) */}
                       {results.length > 0 && (
                         <div className="absolute left-0 right-0 mt-2 rounded-2xl bg-[#161917] border border-white/[0.12] shadow-2xl overflow-hidden z-50 max-h-80 overflow-y-auto divide-y divide-white/[0.06]">
                           {results.map((track) => (
@@ -375,11 +379,9 @@ export default function ViewerPage() {
                               }}
                               className="w-full p-3 flex items-center gap-3.5 hover:bg-white/[0.06] active:bg-white/[0.1] transition text-left"
                             >
-                              <img
-                                src={track.albumCover || 'https://placehold.co/64x64/121212/1DB954?text=♪'}
-                                alt={track.name}
-                                className="w-12 h-12 rounded-xl object-cover shrink-0 bg-black/40"
-                              />
+                              <div className="w-11 h-11 rounded-xl bg-[#1DB954]/10 border border-[#1DB954]/20 flex items-center justify-center text-[#1DB954] shrink-0">
+                                <Music className="w-5 h-5" />
+                              </div>
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2">
                                   <p className="text-sm font-semibold text-white truncate">
@@ -404,13 +406,11 @@ export default function ViewerPage() {
                       )}
                     </div>
                   ) : (
-                    /* Карточка выбранного трека */
+                    /* Карточка выбранного трека (Без картинки) */
                     <div className="rounded-2xl bg-[#1DB954]/10 border border-[#1DB954]/30 p-3.5 flex items-center gap-3.5">
-                      <img
-                        src={selectedTrack.albumCover}
-                        alt={selectedTrack.name}
-                        className="w-14 h-14 rounded-xl object-cover shrink-0 shadow-md"
-                      />
+                      <div className="w-12 h-12 rounded-xl bg-[#1DB954]/20 border border-[#1DB954]/40 flex items-center justify-center text-[#1DB954] shrink-0">
+                        <Music className="w-6 h-6" />
+                      </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <p className="font-semibold text-white truncate">
@@ -529,7 +529,7 @@ export default function ViewerPage() {
               </div>
             </div>
 
-            {/* Карточка 4: Текущие заявки */}
+            {/* Карточка 4: Текущие заявки (Без картинок) */}
             <div className="rounded-3xl bg-white/[0.04] backdrop-blur-xl border border-white/[0.08] p-6 flex-1">
               <h2 className="text-base font-semibold mb-3.5 flex items-center justify-between">
                 <span className="flex items-center gap-2">
@@ -550,14 +550,9 @@ export default function ViewerPage() {
                       key={item.id}
                       className="p-2.5 rounded-2xl bg-black/30 border border-white/[0.05] flex items-center gap-3"
                     >
-                      <img
-                        src={
-                          item.album_cover_url ||
-                          'https://placehold.co/48x48/121212/1DB954?text=♪'
-                        }
-                        alt={item.track_name}
-                        className="w-10 h-10 rounded-xl object-cover shrink-0"
-                      />
+                      <div className="w-10 h-10 rounded-xl bg-[#1DB954]/10 border border-[#1DB954]/20 flex items-center justify-center text-[#1DB954] shrink-0">
+                        <Music className="w-4 h-4" />
+                      </div>
                       <div className="min-w-0 flex-1">
                         <p className="text-xs font-semibold text-white truncate">
                           {item.track_name}

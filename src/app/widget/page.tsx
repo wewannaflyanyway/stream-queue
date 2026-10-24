@@ -45,33 +45,60 @@ export default function WidgetPage() {
   const failCountRef = useRef(0);
 
   useEffect(() => {
+    let isMounted = true;
+    let timeoutId: NodeJS.Timeout;
+
     const fetchData = async () => {
+      const controller = new AbortController();
+      const abortTimer = setTimeout(() => controller.abort(), 6000);
+
       try {
-        const res = await fetch(`/api/spotify/now-playing?t=${Date.now()}`);
+        const res = await fetch(`/api/spotify/now-playing?t=${Date.now()}`, {
+          signal: controller.signal,
+          cache: 'no-store'
+        });
+        clearTimeout(abortTimer);
+
         if (!res.ok) throw new Error(`Ошибка сервера: ${res.status}`);
         const json = await res.json();
         if (json.error) throw new Error(json.error);
 
-        setData(json);
-        setClientError(null);
-        failCountRef.current = 0;
+        if (isMounted) {
+          setData(json);
+          setClientError(null);
+          failCountRef.current = 0;
+        }
       } catch (err: any) {
-        failCountRef.current += 1;
-        if (failCountRef.current >= 5) setClientError(err.message || 'Потеряно соединение');
+        clearTimeout(abortTimer);
+        if (isMounted) {
+          failCountRef.current += 1;
+          if (failCountRef.current >= 5) {
+            setClientError('Ожидание ответа от сервера...');
+          }
+        }
       } finally {
-        setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+          timeoutId = setTimeout(fetchData, 3500);
+        }
       }
     };
+
     fetchData();
-    const interval = setInterval(fetchData, 3500);
-    return () => clearInterval(interval);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timeoutId);
+    };
   }, []);
 
   const s = data.settings;
   const bgColor = hexToRgba(s?.widget_bg_color || '#121212', s?.widget_opacity ?? 90);
   const textColor = s?.widget_text_color || '#ffffff';
   const accentColor = s?.widget_accent_color || '#1DB954';
-  const rawImageUrl = data.isPlaying && data.current?.cover ? data.current.cover : s?.widget_custom_image;
+
+  // ПРИОРИТЕТ: Если пользователь указал свою картинку в настройках — используем её всегда. Иначе берем обложку Spotify.
+  const rawImageUrl = s?.widget_custom_image ? s.widget_custom_image : (data.isPlaying && data.current?.cover ? data.current.cover : null);
   const imageUrl = rawImageUrl && (rawImageUrl.includes('scdn.co') || rawImageUrl.includes('spotify'))
     ? `/api/proxy-image?url=${encodeURIComponent(rawImageUrl)}`
     : rawImageUrl;
@@ -104,9 +131,8 @@ export default function WidgetPage() {
         {!clientError && !data.error && !data.isPlaying && (
           <div className="w-[600px] rounded-3xl border border-white/10 p-5 shadow-xl backdrop-blur-md flex items-center gap-5" style={{ backgroundColor: bgColor }}>
             <div className="w-20 h-20 rounded-2xl flex items-center justify-center shrink-0 bg-black/40 overflow-hidden border border-white/5">
-              {s?.widget_custom_image ? (
-                <img key={s.widget_custom_image} src={s.widget_custom_image} alt="Logo" className="w-full h-full object-cover" />
-                
+              {imageUrl ? (
+                <img key={imageUrl} src={imageUrl} alt="Logo" className="w-full h-full object-cover" />
               ) : (
                 <Music className="w-10 h-10" style={{ color: accentColor }} />
               )}

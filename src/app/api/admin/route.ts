@@ -21,7 +21,12 @@ export async function POST(req: NextRequest) {
       case 'approve': {
         const { id, spotify_uri } = payload;
         try {
-          await addTrackToSpotifyQueue(spotify_uri);
+          const [, dbRes] = await Promise.all([
+            addTrackToSpotifyQueue(spotify_uri),
+            supabase.from('song_requests').update({ status: 'approved' }).eq('id', id),
+          ]);
+          if (dbRes.error) throw dbRes.error;
+          return NextResponse.json({ ok: true });
         } catch (err: any) {
           if (err.message === 'NO_ACTIVE_DEVICE') {
             return NextResponse.json(
@@ -31,10 +36,6 @@ export async function POST(req: NextRequest) {
           }
           throw err;
         }
-
-        const { error } = await supabase.from('song_requests').update({ status: 'approved' }).eq('id', id);
-        if (error) throw error;
-        return NextResponse.json({ ok: true });
       }
 
       case 'reject': {
