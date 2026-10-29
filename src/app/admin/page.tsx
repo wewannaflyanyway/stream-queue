@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
+import { PollsPanel } from '@/components/polls/polls-panel';
 import {
   Check,
   X,
@@ -62,7 +63,7 @@ export default function AdminPage() {
 
   const [settings, setSettings] = useState<any>(null);
   const [requests, setRequests] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState<'queue' | 'history' | 'settings' | 'widget'>('queue');
+  const [activeTab, setActiveTab] = useState<'queue' | 'history' | 'settings' | 'widget' | 'polls'>('queue');
   const [toast, setToast] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
@@ -94,6 +95,7 @@ export default function AdminPage() {
       if (res.ok) {
         sessionStorage.setItem('admin_pin', codeToTest);
         setIsAuthorized(true);
+        if (new URLSearchParams(window.location.search).has('polls')) setActiveTab('polls');
       } else {
         setAuthError('Неверный PIN-код');
         sessionStorage.removeItem('admin_pin');
@@ -449,7 +451,7 @@ export default function AdminPage() {
         </div>
 
         {/* Навигация по вкладкам */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
             onClick={() => setActiveTab('queue')}
@@ -501,7 +503,11 @@ export default function AdminPage() {
             <Settings className="w-4 h-4" />
             Настройки
           </button>
+          <button type="button" onClick={() => setActiveTab('polls')} className={`px-5 py-2.5 rounded-2xl text-xs font-semibold self-start cursor-pointer ${activeTab === 'polls' ? 'bg-[#ad85ff] text-black' : 'bg-white/[0.04] text-[#A7A7A7] hover:text-white'}`}>
+            Голосования
+          </button>
         </div>
+        {activeTab === 'polls' && <PollsPanel pin={pin} />}
 
         {/* ВКЛАДКА 1: ЖИВАЯ ОЧЕРЕДЬ (PENDING) */}
         {activeTab === 'queue' && (

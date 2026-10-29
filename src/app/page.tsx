@@ -1,7 +1,9 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useSyncExternalStore } from 'react';
 import { supabase } from '@/lib/supabase';
+import ProviderIcon from '@/components/provider-icon';
+import { getRequestProvider, MUSIC_PROVIDER_NAMES, type MusicProvider } from '@/lib/music-provider';
 import {
   Search,
   Music,
@@ -47,6 +49,8 @@ interface SongRequest {
   artist_name: string;
   album_cover_url: string;
   spotify_uri: string;
+  provider?: MusicProvider;
+  youtube_video_id?: string | null;
   duration_ms: number;
   is_explicit: boolean;
   sender_name: string;
@@ -60,32 +64,72 @@ function formatDuration(ms: number) {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+interface SearchState {
+  query: string;
+  tracks: Track[];
+  loading: boolean;
+  error: string | null;
+}
+
+const EMPTY_SEARCH: SearchState = { query: '', tracks: [], loading: false, error: null };
+
+function subscribeToViewerName(onChange: () => void) {
+  const handleStorage = (event: StorageEvent) => {
+    if (event.key === 'viewer_name' || event.key === null) onChange();
+  };
+  window.addEventListener('storage', handleStorage);
+  return () => window.removeEventListener('storage', handleStorage);
+}
+
+function getSavedViewerName() {
+  try {
+    return localStorage.getItem('viewer_name') || '';
+  } catch {
+    return '';
+  }
+}
+
 export default function ViewerPage() {
+  const [provider, setProvider] = useState<MusicProvider>('spotify');
   const [settings, setSettings] = useState<StreamSettings | null>(null);
   const [queue, setQueue] = useState<SongRequest[]>([]);
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<Track[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
+  const [search, setSearch] = useState<SearchState>(EMPTY_SEARCH);
   const [selectedTrack, setSelectedTrack] = useState<Track | null>(null);
-  const [senderName, setSenderName] = useState('');
+  const [editedSenderName, setSenderName] = useState<string | null>(null);
+  const savedSenderName = useSyncExternalStore(subscribeToViewerName, getSavedViewerName, () => '');
+  const senderName = editedSenderName ?? savedSenderName;
   const [cooldownLeft, setCooldownLeft] = useState(0);
+  const cooldownUntilRef = useRef(0);
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // 1. Загрузка имени и кулдауна из localStorage
-  useEffect(() => {
-    const savedName = localStorage.getItem('viewer_name');
-    if (savedName) setSenderName(savedName);
+  const trimmedQuery = query.trim();
+  const shouldSearch = provider === 'spotify' && !selectedTrack && trimmedQuery.length >= 2;
+  const results = shouldSearch && search.query === trimmedQuery ? search.tracks : [];
+  const isSearching = shouldSearch && (search.query !== trimmedQuery || search.loading);
+  const searchError = shouldSearch && search.query === trimmedQuery ? search.error : null;
 
+  // Sync the locally stored cooldown without blocking the initial render.
+  useEffect(() => {
     const checkCooldown = () => {
-      const until = Number(localStorage.getItem('cooldown_until') || '0');
+      let until = cooldownUntilRef.current;
+      try {
+        until = Math.max(until, Number(localStorage.getItem('cooldown_until') || '0') || 0);
+      } catch {
+        // Requests still work when browser storage is unavailable.
+      }
+      cooldownUntilRef.current = until;
       const diff = Math.ceil((until - Date.now()) / 1000);
       setCooldownLeft(diff > 0 ? diff : 0);
     };
 
-    checkCooldown();
+    const initialCheck = setTimeout(checkCooldown, 0);
     const timer = setInterval(checkCooldown, 1000);
-    return () => clearInterval(timer);
+    return () => {
+      clearTimeout(initialCheck);
+      clearInterval(timer);
+    };
   }, []);
 
   // 2. Загрузка данных из Supabase + Realtime подписка
@@ -141,45 +185,55 @@ export default function ViewerPage() {
   // 3. Дебаунс-поиск по Spotify (450 мс) с отменой устаревших запросов и таймаутом
   useEffect(() => {
     const trimmed = query.trim();
-    if (selectedTrack || trimmed.length < 2) {
-      setResults([]);
-      setIsSearching(false);
-      return;
-    }
+    if (provider !== 'spotify' || selectedTrack || trimmed.length < 2) return;
 
     const controller = new AbortController();
-    setIsSearching(true);
+    let active = true;
 
     const handler = setTimeout(async () => {
+      setSearch({ query: trimmed, tracks: [], loading: true, error: null });
       const timeoutId = setTimeout(() => controller.abort(), 8000);
       try {
         const res = await fetch(
           `/api/spotify/search?q=${encodeURIComponent(trimmed)}&t=${Date.now()}`,
           { signal: controller.signal, cache: 'no-store' }
         );
-        clearTimeout(timeoutId);
-        if (!res.ok) throw new Error('Search failed');
-        const data = await res.json();
-        if (!controller.signal.aborted) {
-          setResults(data.tracks || []);
+        const data = (await res.json()) as { tracks?: Track[]; error?: string };
+        if (!res.ok) throw new Error(data.error || 'Не удалось выполнить поиск');
+        if (active && !controller.signal.aborted) {
+          setSearch({ query: trimmed, tracks: data.tracks || [], loading: false, error: null });
         }
-      } catch (err: any) {
-        clearTimeout(timeoutId);
-        if (!controller.signal.aborted && err?.name !== 'AbortError') {
-          setResults([]);
+      } catch {
+        if (active) {
+          setSearch({
+            query: trimmed,
+            tracks: [],
+            loading: false,
+            error: controller.signal.aborted
+              ? 'Поиск занял слишком много времени. Попробуй еще раз.'
+              : 'Не удалось найти треки. Проверь соединение и попробуй еще раз.',
+          });
         }
       } finally {
-        if (!controller.signal.aborted) {
-          setIsSearching(false);
-        }
+        clearTimeout(timeoutId);
       }
     }, 450);
 
     return () => {
+      active = false;
       clearTimeout(handler);
       controller.abort();
     };
-  }, [query, selectedTrack]);
+  }, [query, selectedTrack, provider]);
+
+  const switchProvider = (nextProvider: MusicProvider) => {
+    if (provider === nextProvider || submitting) return;
+    setProvider(nextProvider);
+    setQuery('');
+    setSearch(EMPTY_SEARCH);
+    setSelectedTrack(null);
+    setFeedback(null);
+  };
 
   // 4. Клиентская валидация выбранного трека
   const getValidationError = (track: Track | null): string | null => {
@@ -225,13 +279,17 @@ export default function ViewerPage() {
 
   // 5. Отправка трека
   const handleSubmit = async () => {
-    if (!selectedTrack || validationError || cooldownLeft > 0 || !isAccepting || isQueueFull) return;
+    if (provider !== 'spotify' || submitting || !selectedTrack || validationError || cooldownLeft > 0 || !isAccepting || isQueueFull) return;
 
     setSubmitting(true);
     setFeedback(null);
 
     const cleanName = senderName.trim().slice(0, 24);
-    localStorage.setItem('viewer_name', cleanName);
+    try {
+      localStorage.setItem('viewer_name', cleanName);
+    } catch {
+      // Storing the nickname is optional.
+    }
 
     try {
       const res = await fetch('/api/requests', {
@@ -256,7 +314,12 @@ export default function ViewerPage() {
       } else {
         const cdSec = settings?.cooldown_user_sec ?? 300;
         if (cdSec > 0) {
-          localStorage.setItem('cooldown_until', String(Date.now() + cdSec * 1000));
+          cooldownUntilRef.current = Date.now() + cdSec * 1000;
+          try {
+            localStorage.setItem('cooldown_until', String(cooldownUntilRef.current));
+          } catch {
+            // Keep the countdown available for this open page.
+          }
           setCooldownLeft(cdSec);
         }
         setSelectedTrack(null);
@@ -277,44 +340,51 @@ export default function ViewerPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-[#05180f] via-[#0c100e] to-[#121212] text-white font-sans selection:bg-[#1DB954] selection:text-black">
+    <div className="viewer-page min-h-screen font-sans" data-provider={provider}>
       <div className="max-w-5xl mx-auto px-4 py-8 md:py-12">
         {/* Bento Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
           {/* Карточка 1: Статус стрима (На всю ширину сверху) */}
-          <div className="lg:col-span-12 rounded-3xl bg-white/[0.04] backdrop-blur-xl border border-white/[0.08] p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="lg:col-span-12 rounded-3xl bg-[var(--viewer-panel)] backdrop-blur-xl border border-[var(--viewer-panel-border)] p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-2xl bg-[#1DB954]/15 border border-[#1DB954]/30 flex items-center justify-center text-[#1DB954] shrink-0">
-                <Music className="w-6 h-6" />
+              <div className="w-12 h-12 rounded-2xl bg-[var(--viewer-accent-medium)] border border-[var(--viewer-accent-border)] flex items-center justify-center text-[var(--viewer-accent)] shrink-0">
+                <ProviderIcon provider={provider} className="w-6 h-6" />
               </div>
               <div>
                 <div className="flex items-center gap-2.5 flex-wrap">
                   <h1 className="text-xl md:text-2xl font-bold tracking-tight">
                     wewannaflyanyway • Music
                   </h1>
-                  {isAccepting ? (
-                    <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-[#1DB954]/15 text-[#1DB954] border border-[#1DB954]/30">
-                      <span className="w-2 h-2 rounded-full bg-[#1DB954] animate-pulse" />
+                  {provider === 'youtube' ? (
+                    <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-[var(--viewer-accent-medium)] text-[var(--viewer-accent)] border border-[var(--viewer-accent-border)]">
+                      <span className="w-2 h-2 rounded-full bg-[var(--viewer-accent)]" />
+                      YouTube скоро
+                    </span>
+                  ) : isAccepting ? (
+                    <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-[var(--viewer-accent-medium)] text-[var(--viewer-accent)] border border-[var(--viewer-accent-border)]">
+                      <span className="w-2 h-2 rounded-full bg-[var(--viewer-accent)] animate-pulse" />
                       Прием треков открыт
                     </span>
                   ) : (
-                    <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-white/10 text-[#A7A7A7] border border-white/10">
+                    <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-[var(--viewer-neutral)] text-[var(--viewer-muted)] border border-[var(--viewer-input-border)]">
                       <span className="w-2 h-2 rounded-full bg-[#A7A7A7]" />
                       Прием музыки закрыт
                     </span>
                   )}
                 </div>
-                <p className="text-sm text-[#A7A7A7] mt-1">
-                  Закажи любимый трек напрямую в очередь Spotify на стриме
+                <p className="text-sm text-[var(--viewer-muted)] mt-1">
+                  {provider === 'spotify'
+                    ? 'Закажи любимый трек напрямую в очередь Spotify на стриме'
+                    : 'Любимые видео и музыка с YouTube — скоро на стриме'}
                 </p>
               </div>
             </div>
 
-            <div className="w-full sm:w-auto flex items-center justify-between sm:justify-end gap-3 bg-black/30 px-4 py-2.5 rounded-2xl border border-white/[0.06]">
-              <span className="text-xs text-[#A7A7A7]">Очередь ожидания:</span>
+            <div className="w-full sm:w-auto flex items-center justify-between sm:justify-end gap-3 bg-[var(--viewer-surface)] px-4 py-2.5 rounded-2xl border border-[var(--viewer-divider)]">
+              <span className="text-xs text-[var(--viewer-muted)]">Очередь ожидания:</span>
               <span
                 className={`text-sm font-bold ${
-                  isQueueFull ? 'text-[#E91429]' : 'text-white'
+                  isQueueFull ? 'text-[var(--viewer-danger)]' : 'text-[var(--viewer-text)]'
                 }`}
               >
                 В очереди: {pendingCount} / {maxQueueSize}
@@ -323,26 +393,47 @@ export default function ViewerPage() {
           </div>
 
           {/* Карточка 2: Живой поиск и заказ (Левая основная колонка) */}
-          <div className="lg:col-span-7 rounded-3xl bg-white/[0.04] backdrop-blur-xl border border-white/[0.08] p-6 flex flex-col justify-between relative">
+          <div className="lg:col-span-7 rounded-3xl bg-[var(--viewer-panel)] backdrop-blur-xl border border-[var(--viewer-panel-border)] p-6 flex flex-col justify-between relative">
             <div>
-              <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-[#1DB954]" />
+              <h2 id="music-order-heading" className="text-lg font-semibold mb-4 flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-[var(--viewer-accent)]" />
                 Заказать музыку
               </h2>
 
+              <div className="viewer-provider-switch" role="group" aria-label="Источник музыки">
+                {(['spotify', 'youtube'] as const).map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    className="viewer-provider-button"
+                    data-provider={option}
+                    aria-pressed={provider === option}
+                    aria-controls="music-order-form"
+                    disabled={submitting}
+                    onClick={() => switchProvider(option)}
+                  >
+                    <ProviderIcon provider={option} className="w-5 h-5" />
+                    {MUSIC_PROVIDER_NAMES[option]}
+                    {option === 'youtube' && <span className="viewer-soon">Скоро</span>}
+                  </button>
+                ))}
+              </div>
+
+              <div id="music-order-form" role="region" aria-labelledby="music-order-heading">
+
               {/* Блокировки если закрыто или очередь полная */}
-              {!isAccepting ? (
-                <div className="rounded-2xl bg-white/[0.03] border border-white/[0.08] p-6 text-center my-4">
-                  <AlertCircle className="w-8 h-8 text-[#A7A7A7] mx-auto mb-2" />
-                  <p className="font-medium text-white">Прием заказов сейчас приостановлен</p>
-                  <p className="text-xs text-[#A7A7A7] mt-1">
+                {provider === 'spotify' && !isAccepting ? (
+                <div className="rounded-2xl bg-[var(--viewer-surface)] border border-[var(--viewer-panel-border)] p-6 text-center my-4">
+                  <AlertCircle className="w-8 h-8 text-[var(--viewer-muted)] mx-auto mb-2" />
+                  <p className="font-medium text-[var(--viewer-text)]">Прием заказов сейчас приостановлен</p>
+                  <p className="text-xs text-[var(--viewer-muted)] mt-1">
                     Подожди, пока стример снова откроет очередь
                   </p>
                 </div>
-              ) : isQueueFull ? (
-                <div className="rounded-2xl bg-[#E91429]/10 border border-[#E91429]/30 p-6 text-center my-4">
-                  <AlertCircle className="w-8 h-8 text-[#E91429] mx-auto mb-2" />
-                  <p className="font-medium text-white">
+                ) : provider === 'spotify' && isQueueFull ? (
+                <div className="rounded-2xl bg-[var(--viewer-danger-soft)] border border-[var(--viewer-danger-border)] p-6 text-center my-4">
+                  <AlertCircle className="w-8 h-8 text-[var(--viewer-danger)] mx-auto mb-2" />
+                  <p className="font-medium text-[var(--viewer-text)]">
                     Очередь заполнена. Новые заказы откроются по мере воспроизведения
                   </p>
                 </div>
@@ -352,52 +443,72 @@ export default function ViewerPage() {
                   {!selectedTrack ? (
                     <div className="relative">
                       <div className="relative flex items-center">
-                        <Search className="w-5 h-5 text-[#A7A7A7] absolute left-4 pointer-events-none" />
+                        <Search className="w-5 h-5 text-[var(--viewer-muted)] absolute left-4 pointer-events-none" />
                         <input
                           type="text"
                           value={query}
                           onChange={(e) => setQuery(e.target.value)}
-                          placeholder="Название трека или исполнитель..."
-                          className="w-full min-h-[48px] pl-12 pr-10 py-3 rounded-2xl bg-black/40 border border-white/[0.1] text-white placeholder-[#A7A7A7] text-sm focus:outline-none focus:border-[#1DB954] transition"
+                          disabled={provider === 'youtube'}
+                          aria-label={provider === 'spotify' ? 'Название трека или исполнитель в Spotify' : 'Ссылка на видео YouTube'}
+                          placeholder={provider === 'spotify' ? 'Название трека или исполнитель...' : 'Ссылка на видео YouTube'}
+                          className="w-full min-h-[48px] pl-12 pr-10 py-3 rounded-2xl bg-[var(--viewer-input)] border border-[var(--viewer-input-border)] text-[var(--viewer-text)] placeholder-[var(--viewer-muted)] text-sm focus:outline-none focus:border-[var(--viewer-accent)] transition"
                         />
                         {isSearching && (
-                          <Loader2 className="w-4 h-4 text-[#1DB954] animate-spin absolute right-4" />
+                          <Loader2 className="w-4 h-4 text-[var(--viewer-accent)] animate-spin absolute right-4" />
                         )}
                       </div>
 
+                      {provider === 'youtube' && (
+                        <div className="mt-3 rounded-2xl bg-[var(--viewer-accent-soft)] border border-[var(--viewer-accent-border)] p-4 flex items-start gap-3">
+                          <ProviderIcon provider="youtube" className="w-6 h-6 text-[var(--viewer-accent)] shrink-0 mt-0.5" />
+                          <div>
+                            <p className="text-sm font-semibold">Готовим заказы с YouTube</p>
+                            <p className="text-xs text-[var(--viewer-muted)] mt-1 leading-relaxed">
+                              Скоро здесь можно будет отправить ссылку на видео. Пока любимые треки можно заказать через Spotify.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      {searchError && (
+                        <p role="status" className="mt-3 text-xs text-[var(--viewer-danger)]">
+                          {searchError}
+                        </p>
+                      )}
+
                       {/* Выпадающий список результатов (Без тяжелых картинок) */}
                       {results.length > 0 && (
-                        <div className="absolute left-0 right-0 mt-2 rounded-2xl bg-[#161917] border border-white/[0.12] shadow-2xl overflow-hidden z-50 max-h-80 overflow-y-auto divide-y divide-white/[0.06]">
+                        <div className="absolute left-0 right-0 mt-2 rounded-2xl bg-[var(--viewer-dropdown)] border border-[var(--viewer-input-border)] shadow-2xl overflow-hidden z-50 max-h-80 overflow-y-auto divide-y divide-[var(--viewer-divider)]">
                           {results.map((track) => (
                             <button
                               key={track.id}
                               type="button"
                               onClick={() => {
                                 setSelectedTrack(track);
-                                setResults([]);
+                                setSearch(EMPTY_SEARCH);
                                 setFeedback(null);
                               }}
-                              className="w-full p-3 flex items-center gap-3.5 hover:bg-white/[0.06] active:bg-white/[0.1] transition text-left"
+                              className="w-full p-3 flex items-center gap-3.5 hover:bg-[var(--viewer-hover)] active:bg-[var(--viewer-hover)] transition text-left"
                             >
-                              <div className="w-11 h-11 rounded-xl bg-[#1DB954]/10 border border-[#1DB954]/20 flex items-center justify-center text-[#1DB954] shrink-0">
+                              <div className="w-11 h-11 rounded-xl bg-[var(--viewer-accent-soft)] border border-[var(--viewer-accent-border)] flex items-center justify-center text-[var(--viewer-accent)] shrink-0">
                                 <Music className="w-5 h-5" />
                               </div>
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2">
-                                  <p className="text-sm font-semibold text-white truncate">
+                                  <p className="text-sm font-semibold text-[var(--viewer-text)] truncate">
                                     {track.name}
                                   </p>
                                   {track.isExplicit && (
-                                    <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-[#E91429]/20 text-[#E91429] border border-[#E91429]/40 shrink-0">
+                                    <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-[var(--viewer-danger-soft)] text-[var(--viewer-danger)] border border-[var(--viewer-danger-border)] shrink-0">
                                       E
                                     </span>
                                   )}
                                 </div>
-                                <p className="text-xs text-[#A7A7A7] truncate mt-0.5">
+                                <p className="text-xs text-[var(--viewer-muted)] truncate mt-0.5">
                                   {track.artist}
                                 </p>
                               </div>
-                              <span className="text-xs font-mono text-[#A7A7A7] shrink-0">
+                              <span className="text-xs font-mono text-[var(--viewer-muted)] shrink-0">
                                 {formatDuration(track.durationMs)}
                               </span>
                             </button>
@@ -407,13 +518,13 @@ export default function ViewerPage() {
                     </div>
                   ) : (
                     /* Карточка выбранного трека (Без картинки) */
-                    <div className="rounded-2xl bg-[#1DB954]/10 border border-[#1DB954]/30 p-3.5 flex items-center gap-3.5">
-                      <div className="w-12 h-12 rounded-xl bg-[#1DB954]/20 border border-[#1DB954]/40 flex items-center justify-center text-[#1DB954] shrink-0">
+                    <div className="rounded-2xl bg-[var(--viewer-accent-soft)] border border-[var(--viewer-accent-border)] p-3.5 flex items-center gap-3.5">
+                      <div className="w-12 h-12 rounded-xl bg-[var(--viewer-accent-strong)] border border-[var(--viewer-accent-border-strong)] flex items-center justify-center text-[var(--viewer-accent)] shrink-0">
                         <Music className="w-6 h-6" />
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <p className="font-semibold text-white truncate">
+                          <p className="font-semibold text-[var(--viewer-text)] truncate">
                             {selectedTrack.name}
                           </p>
                           {selectedTrack.isExplicit && (
@@ -422,14 +533,14 @@ export default function ViewerPage() {
                             </span>
                           )}
                         </div>
-                        <p className="text-xs text-[#A7A7A7] truncate mt-0.5">
+                        <p className="text-xs text-[var(--viewer-muted)] truncate mt-0.5">
                           {selectedTrack.artist} • {formatDuration(selectedTrack.durationMs)}
                         </p>
                       </div>
                       <button
                         type="button"
                         onClick={() => setSelectedTrack(null)}
-                        className="w-9 h-9 rounded-xl bg-black/40 hover:bg-black/60 flex items-center justify-center text-[#A7A7A7] hover:text-white transition shrink-0"
+                        className="w-9 h-9 rounded-xl bg-[var(--viewer-input)] hover:bg-[var(--viewer-hover)] flex items-center justify-center text-[var(--viewer-muted)] hover:text-[var(--viewer-text)] transition shrink-0"
                         title="Сбросить выбор"
                       >
                         <X className="w-4 h-4" />
@@ -440,35 +551,37 @@ export default function ViewerPage() {
                   {/* Поле никнейма */}
                   <div className="mt-4">
                     <div className="relative flex items-center">
-                      <User className="w-4 h-4 text-[#A7A7A7] absolute left-4 pointer-events-none" />
+                      <User className="w-4 h-4 text-[var(--viewer-muted)] absolute left-4 pointer-events-none" />
                       <input
                         type="text"
                         maxLength={24}
                         value={senderName}
                         onChange={(e) => setSenderName(e.target.value)}
                         placeholder="Твой никнейм (необязательно)"
-                        className="w-full min-h-[44px] pl-11 pr-4 py-2.5 rounded-2xl bg-black/40 border border-white/[0.08] text-white placeholder-[#A7A7A7] text-sm focus:outline-none focus:border-[#1DB954] transition"
+                        className="w-full min-h-[44px] pl-11 pr-4 py-2.5 rounded-2xl bg-[var(--viewer-input)] border border-[var(--viewer-panel-border)] text-[var(--viewer-text)] placeholder-[var(--viewer-muted)] text-sm focus:outline-none focus:border-[var(--viewer-accent)] transition"
                       />
                     </div>
                   </div>
 
                   {/* Ошибка валидации */}
                   {validationError && (
-                    <div className="mt-4 rounded-2xl bg-[#E91429]/15 border border-[#E91429]/40 px-4 py-3 flex items-center gap-2.5 text-xs text-[#ff6b78]">
-                      <ShieldAlert className="w-4 h-4 text-[#E91429] shrink-0" />
+                    <div className="mt-4 rounded-2xl bg-[var(--viewer-danger-soft)] border border-[var(--viewer-danger-border)] px-4 py-3 flex items-center gap-2.5 text-xs text-[var(--viewer-danger)]">
+                      <ShieldAlert className="w-4 h-4 text-[var(--viewer-danger)] shrink-0" />
                       <span>{validationError}</span>
                     </div>
                   )}
                 </>
               )}
 
+              </div>
+
               {/* Уведомление об отправке */}
               {feedback && (
                 <div
                   className={`mt-4 rounded-2xl px-4 py-3 flex items-center gap-2.5 text-xs border ${
                     feedback.type === 'success'
-                      ? 'bg-[#1DB954]/15 border-[#1DB954]/40 text-[#1ed760]'
-                      : 'bg-[#E91429]/15 border-[#E91429]/40 text-[#ff6b78]'
+                      ? 'bg-[var(--viewer-success-soft)] border-[var(--viewer-success-border)] text-[var(--viewer-success)]'
+                      : 'bg-[var(--viewer-danger-soft)] border-[var(--viewer-danger-border)] text-[var(--viewer-danger)]'
                   }`}
                 >
                   {feedback.type === 'success' ? (
@@ -486,6 +599,7 @@ export default function ViewerPage() {
               type="button"
               onClick={handleSubmit}
               disabled={
+                provider === 'youtube' ||
                 !selectedTrack ||
                 Boolean(validationError) ||
                 cooldownLeft > 0 ||
@@ -493,9 +607,14 @@ export default function ViewerPage() {
                 !isAccepting ||
                 isQueueFull
               }
-              className="mt-6 w-full min-h-[48px] rounded-2xl font-semibold text-sm flex items-center justify-center gap-2 transition shadow-lg disabled:opacity-40 disabled:cursor-not-allowed bg-[#1DB954] hover:bg-[#1ed760] text-black cursor-pointer"
+              className="mt-6 w-full min-h-[48px] rounded-2xl font-semibold text-sm flex items-center justify-center gap-2 transition shadow-lg disabled:opacity-40 disabled:cursor-not-allowed bg-[var(--viewer-accent)] hover:bg-[var(--viewer-accent-hover)] text-[var(--viewer-on-accent)] cursor-pointer"
             >
-              {submitting ? (
+              {provider === 'youtube' ? (
+                <>
+                  <ProviderIcon provider="youtube" className="w-5 h-5" />
+                  Заказы с YouTube скоро откроются
+                </>
+              ) : submitting ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
                   Отправляем...
@@ -518,29 +637,29 @@ export default function ViewerPage() {
           {/* Правая колонка: Правила + Виджет очереди */}
           <div className="lg:col-span-5 flex flex-col gap-5">
             {/* Карточка 3: Правила стрима */}
-            <div className="rounded-3xl bg-white/[0.04] backdrop-blur-xl border border-white/[0.08] p-6">
+            <div className="rounded-3xl bg-[var(--viewer-panel)] backdrop-blur-xl border border-[var(--viewer-panel-border)] p-6">
               <h2 className="text-base font-semibold mb-3 flex items-center gap-2">
-                <ShieldAlert className="w-4 h-4 text-[#1DB954]" />
+                <ShieldAlert className="w-4 h-4 text-[var(--viewer-accent)]" />
                 Правила заказа музыки
               </h2>
-              <div className="text-xs text-[#A7A7A7] whitespace-pre-line leading-relaxed">
+              <div className="text-xs text-[var(--viewer-muted)] whitespace-pre-line leading-relaxed">
                 {settings?.rules_text ||
                   '1. Без треков с бан-вордами Twitch/YouTube.\n2. Без скримеров, бассбуста и троллинга.\n3. Соблюдайте лимит по времени трека.'}
               </div>
             </div>
 
             {/* Карточка 4: Текущие заявки (Без картинок) */}
-            <div className="rounded-3xl bg-white/[0.04] backdrop-blur-xl border border-white/[0.08] p-6 flex-1">
+            <div className="rounded-3xl bg-[var(--viewer-panel)] backdrop-blur-xl border border-[var(--viewer-panel-border)] p-6 flex-1">
               <h2 className="text-base font-semibold mb-3.5 flex items-center justify-between">
                 <span className="flex items-center gap-2">
-                  <ListMusic className="w-4 h-4 text-[#1DB954]" />
+                  <ListMusic className="w-4 h-4 text-[var(--viewer-accent)]" />
                   Ближайшие заявки
                 </span>
-                <span className="text-xs font-normal text-[#A7A7A7]">Live</span>
+                <span className="text-xs font-normal text-[var(--viewer-muted)]">Live</span>
               </h2>
 
               {queue.length === 0 ? (
-                <div className="text-center py-8 text-xs text-[#A7A7A7]">
+                <div className="text-center py-8 text-xs text-[var(--viewer-muted)]">
                   В очереди пока пусто — будь первым!
                 </div>
               ) : (
@@ -548,24 +667,30 @@ export default function ViewerPage() {
                   {queue.slice(0, 5).map((item) => (
                     <div
                       key={item.id}
-                      className="p-2.5 rounded-2xl bg-black/30 border border-white/[0.05] flex items-center gap-3"
+                      className="p-2.5 rounded-2xl bg-[var(--viewer-surface)] border border-[var(--viewer-divider)] flex items-center gap-3"
                     >
-                      <div className="w-10 h-10 rounded-xl bg-[#1DB954]/10 border border-[#1DB954]/20 flex items-center justify-center text-[#1DB954] shrink-0">
-                        <Music className="w-4 h-4" />
+                      <div
+                        className="viewer-source-mark"
+                        data-provider={getRequestProvider(item)}
+                        role="img"
+                        aria-label={`Источник: ${MUSIC_PROVIDER_NAMES[getRequestProvider(item)]}`}
+                        title={MUSIC_PROVIDER_NAMES[getRequestProvider(item)]}
+                      >
+                        <ProviderIcon provider={getRequestProvider(item)} className="w-5 h-5" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="text-xs font-semibold text-white truncate">
+                        <p className="text-xs font-semibold text-[var(--viewer-text)] truncate">
                           {item.track_name}
                         </p>
-                        <p className="text-[11px] text-[#A7A7A7] truncate">
+                        <p className="text-[11px] text-[var(--viewer-muted)] truncate">
                           {item.artist_name} • от {item.sender_name}
                         </p>
                       </div>
                       <span
                         className={`px-2 py-0.5 rounded-full text-[10px] font-medium shrink-0 ${
                           item.status === 'approved'
-                            ? 'bg-[#1DB954]/15 text-[#1DB954] border border-[#1DB954]/30'
-                            : 'bg-white/10 text-[#A7A7A7]'
+                            ? 'bg-[var(--viewer-accent-medium)] text-[var(--viewer-accent)] border border-[var(--viewer-accent-border)]'
+                            : 'bg-[var(--viewer-neutral)] text-[var(--viewer-muted)]'
                         }`}
                       >
                         {item.status === 'approved' ? 'В плеере' : 'Ждет'}
