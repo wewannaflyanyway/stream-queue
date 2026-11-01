@@ -24,6 +24,22 @@ function normal(text: string): string {
   return words(text).join(' ');
 }
 
+function repeatedSyllable(text: string): string | null {
+  const compact = text.normalize('NFKD').toLocaleLowerCase('ru').replace(/[^\p{L}\p{N}]/gu, '');
+  return /^(\p{L}{1,3})\1{2,}$/u.exec(compact)?.[1] ?? null;
+}
+
+function repetitiveTitleMatch(query: string, track: BotSpotifyTrack): boolean {
+  const normalizedQuery = query.normalize('NFKD').toLocaleLowerCase('ru').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  return track.artists.some(artist => {
+    const name = artist.name.normalize('NFKD').toLocaleLowerCase('ru').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+    if (!name) return false;
+    const remainder = normalizedQuery.startsWith(`${name} `) ? normalizedQuery.slice(name.length + 1) : normalizedQuery.endsWith(` ${name}`) ? normalizedQuery.slice(0, -name.length - 1) : '';
+    const wanted = repeatedSyllable(remainder);
+    return wanted !== null && wanted === repeatedSyllable(track.name);
+  });
+}
+
 function coverage(expected: string[], actual: string[]): number {
   if (!expected.length) return 0;
   const present = new Set(actual);
@@ -89,12 +105,13 @@ function rank(track: BotSpotifyTrack, query: string, pair: [StructuredQuery, Str
   const match = coverage(queryWords, fullWords);
   // At least three quarters of the meaningful words must occur in the title or artists.
   // For a single word, it must be an entire word, not part of an unrelated word.
-  if (!queryWords.length || match < 0.75) return null;
+  const repetitiveMatch = repetitiveTitleMatch(query, track);
+  if (!queryWords.length || (match < 0.75 && !repetitiveMatch)) return null;
   const exactTitle = normal(query) === normal(track.name);
   const exactArtist = track.artists.some(a => normal(a.name) === normal(query));
   const exactCombination = track.artists.some(a =>
     normal(query) === normal(`${a.name} ${track.name}`) || normal(query) === normal(`${track.name} ${a.name}`));
-  return match + (exactTitle ? 1 : 0) + (exactArtist ? 0.5 : 0) + (exactCombination ? 0.5 : 0)
+  return match + (repetitiveMatch ? 1.5 : 0) + (exactTitle ? 1 : 0) + (exactArtist ? 0.5 : 0) + (exactCombination ? 0.5 : 0)
     + (coverage(queryWords, titleWords) === 1 ? 0.1 : 0);
 }
 

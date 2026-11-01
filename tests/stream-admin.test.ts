@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 import { NextRequest } from 'next/server';
 
-test('saving unrelated settings cannot override manual pause or open orders offline', async () => {
+test('saving unrelated settings cannot override manual pause, but explicit offline opening works', async () => {
   const originalPin = process.env.ADMIN_PIN;
   process.env.ADMIN_PIN = 'local-test-pin';
   const updates: Record<string, unknown>[] = [];
@@ -14,7 +14,7 @@ test('saving unrelated settings cannot override manual pause or open orders offl
         update: (values:Record<string, unknown>) => ({eq: async () => { updates.push(values); if (typeof values.is_accepting === 'boolean') accepting=values.is_accepting; return {error:null}; }}),
         select: () => ({eq: () => ({single: async () => ({data:{is_accepting:accepting},error:null})})}),
       }),
-      rpc: async (name:string,args:{p_accepting:boolean}) => { if (name==='music_stream_manual') { manual.push(args.p_accepting); accepting=false; } return {error:null}; },
+      rpc: async (name:string,args:{p_accepting:boolean}) => { if (name==='music_stream_manual') { manual.push(args.p_accepting); accepting=args.p_accepting; } return {error:null}; },
     }),
   } });
   mock.module(new URL('../src/lib/spotify.ts',import.meta.url).href, { namedExports: { addTrackToSpotifyQueue: async () => true, skipSpotifyTrack: async () => true } });
@@ -29,7 +29,7 @@ test('saving unrelated settings cannot override manual pause or open orders offl
     assert.deepEqual(updates,[{max_queue_size:20}]);
     assert.deepEqual(manual,[]);
     const response = await send('set_accepting',{is_accepting:true});
-    assert.equal((await response.json()).is_accepting,false);
+    assert.equal((await response.json()).is_accepting,true);
     assert.deepEqual(manual,[true]);
     assert.equal((await send('set_accepting',{is_accepting:true},'wrong')).status,401);
   } finally {

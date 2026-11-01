@@ -7,7 +7,7 @@ export async function GET(request: Request) {
   try {
     const snapshot = await getStreamSnapshot();
     if (snapshot.stream?.automation_enabled && (!snapshot.stream.online_subscription_id || !snapshot.stream.offline_subscription_id)) return new Response(`@${user}, не удалось проверить состояние стрима. Попробуй позже.`);
-    if (!snapshot.stream?.online) return new Response(`@${user}, сейчас нет активного стрима.`);
+    if (!snapshot.stream?.online && !snapshot.stream?.manual_offline_since) return new Response(`@${user}, сейчас нет активного стрима.`);
     const result = positionForUser(user, [...snapshot.pending, ...snapshot.requests], snapshot.current, snapshot.queue, snapshot.playbackAvailable);
     if (result.kind === 'none') return new Response(`@${user}, активных заявок не найдено.`);
     if (result.kind === 'pending') return new Response(`@${user}, твоя заявка ожидает модерации. Позиция пока неизвестна.`);

@@ -5,6 +5,7 @@ import { eventSecret, helix, twitchConfig } from '@/lib/polls/twitch';
 export interface StreamState {
   automation_enabled: boolean;
   manual_paused: boolean;
+  manual_offline_since: string | null;
   online: boolean;
   session_id: string | null;
   offline_at: string | null;

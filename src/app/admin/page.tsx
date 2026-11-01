@@ -491,7 +491,7 @@ export default function AdminPage() {
         </div>
 
         <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] px-5 py-4 flex flex-wrap items-center justify-between gap-3">
-          <div><p className="text-sm font-semibold">Стрим Twitch: {streamState?.automationEnabled ? !streamState.connectionHealthy ? 'подписка требует восстановления' : !streamState.verified ? 'не удалось проверить' : streamState.online ? 'в эфире' : 'не в эфире' : 'автоматическое управление выключено'}</p><p className="text-xs text-[#A7A7A7] mt-1">При обрыве до 30 минут история сохраняется; ручная пауза заказов имеет приоритет.</p></div>
+          <div><p className="text-sm font-semibold">Стрим Twitch: {streamState?.automationEnabled ? !streamState.connectionHealthy ? 'подписка требует восстановления' : !streamState.verified ? 'не удалось проверить' : streamState.online ? 'в эфире' : 'не в эфире' : 'автоматическое управление выключено'}</p><p className="text-xs text-[#A7A7A7] mt-1">При обрыве до 30 минут история сохраняется. Заказы можно открыть вручную вне эфира; ручная пауза имеет приоритет.</p></div>
           <button type="button" disabled={streamBusy} onClick={async () => {
             setStreamBusy(true);
             try {

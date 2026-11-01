@@ -14,6 +14,13 @@ test('rejects the unrelated JOHN CENA result from the reported Ben-10 query', as
   assert.equal(result.kind, 'uncertain');
 });
 
+test('matches a repeated syllable written with spaces to the original track', async () => {
+  const result = await resolveBotTextSearch('stray kids la la la', async () => [track('LALALALA', 'Stray Kids'), track('LALALALA (Rock Ver.)', 'Stray Kids'), track('This & That', 'Stray Kids')]);
+  assert.equal(result.kind, 'match');
+  if (result.kind === 'match') assert.equal(result.track.name, 'LALALALA');
+  assert.equal((await resolveBotTextSearch('stray kids la la la', async () => [track('LALALALA', 'Other Artist')])).kind, 'uncertain');
+});
+
 test('finds a relevant candidate after unrelated results and tolerates punctuation', async () => {
   const result = await resolveBotTextSearch('Opening Theme Ben-10 Classic', async () => [
     track('JOHN CENA', 'Joey Valence & Brae'),

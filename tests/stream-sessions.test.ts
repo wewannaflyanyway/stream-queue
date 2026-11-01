@@ -32,6 +32,7 @@ test('stream sessions preserve a 30-minute reconnect and respect a manual pause'
   try {
     await db.exec('create role anon; create role authenticated; create role service_role bypassrls; create table stream_settings(id integer primary key, is_accepting boolean); insert into stream_settings values(1,true); create table song_requests(id uuid primary key default gen_random_uuid(), status text, spotify_uri text, created_at timestamptz default now());');
     await db.exec(await readFile(new URL('../supabase/migrations/202611010001_stream_sessions.sql', import.meta.url), 'utf8'));
+    await db.exec(await readFile(new URL('../supabase/migrations/202611010002_manual_offline_requests.sql', import.meta.url), 'utf8'));
     const event = async (type: string, time: string, id: string | null = null) => {
       const result = await db.query<{ state: { online: boolean; session_id: string } }>('select music_stream_event($1,$2,$3,$4) as state', [type, time, id, id ? time : null]);
       return result.rows[0].state;
@@ -66,9 +67,17 @@ test('stream sessions preserve a 30-minute reconnect and respect a manual pause'
     assert.equal(await accepting(), false);
     await assert.rejects(db.query("insert into song_requests(status) values ('pending')"), /Прием заявок закрыт/);
     await db.query('select music_stream_manual(true)');
+    assert.equal(await accepting(), true);
+    const offlineRow = await db.query<{ id: string; stream_session_id: string | null }>("insert into song_requests(status,spotify_uri) values ('approved','spotify:offline') returning id,stream_session_id");
+    assert.equal(offlineRow.rows[0].stream_session_id, null);
+    await db.query('select music_stream_manual(false)');
     assert.equal(await accepting(), false);
+    await assert.rejects(db.query("insert into song_requests(status) values ('pending')"), /Прием заявок закрыт/);
+    await db.query('select music_stream_manual(true)');
     const next = await event('online', '2026-11-01T12:30:01Z', 'third');
     assert.notEqual(next.session_id, first.session_id);
+    const attached = await db.query<{ stream_session_id: string }>('select stream_session_id from song_requests where id=$1', [offlineRow.rows[0].id]);
+    assert.equal(attached.rows[0].stream_session_id, next.session_id);
     const archivedPending = await db.query<{ stream_pending_archived: boolean }>('select stream_pending_archived from song_requests where id=$1', [pendingRow.rows[0].id]);
     assert.equal(archivedPending.rows[0].stream_pending_archived, true);
     assert.equal(await accepting(), true);
@@ -79,6 +88,8 @@ test('stream sessions preserve a 30-minute reconnect and respect a manual pause'
     await db.query('select music_stream_revoke($1,$2,$3)', ['stream.offline', 'offline', '2026-11-01T12:31:00Z']);
     assert.equal(await accepting(), false);
     await db.query('select music_stream_manual(true)');
+    assert.equal(await accepting(), false);
+    await event('offline', '2026-11-01T12:32:00Z');
     assert.equal(await accepting(), false);
     const archived = await db.query<{ count: number }>('select count(*)::int as count from song_requests where stream_session_id=$1', [first.session_id]);
     assert.equal(archived.rows[0].count, 2);

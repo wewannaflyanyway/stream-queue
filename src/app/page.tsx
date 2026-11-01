@@ -257,7 +257,7 @@ export default function ViewerPage() {
 
   const maxQueueSize = settings?.max_queue_size || 15;
   const isQueueFull = pendingCount >= maxQueueSize;
-  const isAccepting = (settings?.is_accepting ?? false) && (liveStatus === 'online' || liveStatus === 'unmanaged');
+  const isAccepting = (settings?.is_accepting ?? false) && liveStatus !== 'unknown';
   const validationError = getValidationError(selectedTrack);
 
   // 5. Отправка трека

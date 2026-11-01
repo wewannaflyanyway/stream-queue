@@ -15,14 +15,17 @@ export interface StreamSnapshot {
   requests: QueueRequest[];
 }
 
-async function loadRequests(sessionId: string | null): Promise<{ pending: QueueRequest[]; history: QueueRequest[] }> {
+async function loadRequests(sessionId: string | null, offlineSince: string | null): Promise<{ pending: QueueRequest[]; history: QueueRequest[] }> {
   const db = getServiceSupabase();
   async function collect(mode: 'pending' | 'history'): Promise<QueueRequest[]> {
     const rows: QueueRequest[] = [];
     for (let offset = 0; ; offset += 1000) {
       let query = db.from('song_requests').select('id,created_at,queued_at,stream_session_id,stream_history_hidden,track_name,artist_name,sender_name,spotify_uri,status').order('created_at', { ascending: true }).order('id', { ascending: true }).range(offset, offset + 999);
       if (mode === 'pending') query = query.eq('status', 'pending').eq('stream_pending_archived', false);
-      else query = query.eq('stream_session_id', sessionId!).in('status', ['approved', 'played']);
+      else {
+        query = query.in('status', ['approved', 'played']);
+        query = sessionId ? query.eq('stream_session_id', sessionId) : query.is('stream_session_id', null).gte('created_at', offlineSince!);
+      }
       const { data, error } = await query;
       if (error) throw new Error('Не удалось загрузить заявки.');
       rows.push(...(data as QueueRequest[]));
@@ -30,7 +33,7 @@ async function loadRequests(sessionId: string | null): Promise<{ pending: QueueR
     }
     return rows;
   }
-  const [pending, history] = await Promise.all([collect('pending'), sessionId ? collect('history') : Promise.resolve([])]);
+  const [pending, history] = await Promise.all([collect('pending'), sessionId || offlineSince ? collect('history') : Promise.resolve([])]);
   return { pending, history };
 }
 
@@ -42,7 +45,7 @@ function item(raw: { uri?: string; name?: string; artists?: { name: string }[] }
 export async function getStreamSnapshot(): Promise<StreamSnapshot> {
   const stream = await reconcileStreamState(false);
   if (!stream) throw new Error('Не настроена база стрима.');
-  const { pending, history } = await loadRequests(stream.session_id);
+  const { pending, history } = await loadRequests(stream.online ? stream.session_id : null, stream.online ? null : stream.manual_offline_since);
   let current: PlayerItem | null = null;
   let queue: PlayerItem[] = [];
   let playbackAvailable = false;
