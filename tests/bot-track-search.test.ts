@@ -21,6 +21,16 @@ test('matches a repeated syllable written with spaces to the original track', as
   assert.equal((await resolveBotTextSearch('stray kids la la la', async () => [track('LALALALA', 'Other Artist')])).kind, 'uncertain');
 });
 
+test('accepts missing punctuation and a small typo when another word matches', async () => {
+  const candidates = [track('Тошно', 'STED.D'), track('Другая песня', 'STED.D'), track('Тошно', 'Другой исполнитель')];
+  for (const query of ['тошно stedd', 'тошно sted.d', 'тошно - stedd', 'тошно steddx', 'тошнo stedd']) {
+    const result = await resolveBotTextSearch(query, async () => candidates);
+    assert.equal(result.kind, 'match', query);
+    if (result.kind === 'match') assert.equal(result.track.artists[0].name, 'STED.D', query);
+  }
+  assert.equal((await resolveBotTextSearch('совсем другие слова', async () => candidates)).kind, 'uncertain');
+});
+
 test('finds a relevant candidate after unrelated results and tolerates punctuation', async () => {
   const result = await resolveBotTextSearch('Opening Theme Ben-10 Classic', async () => [
     track('JOHN CENA', 'Joey Valence & Brae'),

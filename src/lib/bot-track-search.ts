@@ -17,7 +17,7 @@ export type BotSearchResult =
 type StructuredQuery = { artist: string; title: string };
 
 function words(text: string): string[] {
-  return [...new Set((text.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('ru').replace(/ё/g, 'е').match(/[\p{L}\p{N}]+/gu) ?? []))];
+  return [...new Set((text.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('ru').replace(/ё/g, 'е').replace(/(?<=[\p{L}\p{N}])[.'’](?=[\p{L}\p{N}])/gu, '').match(/[\p{L}\p{N}]+/gu) ?? []))];
 }
 
 function normal(text: string): string {
@@ -46,6 +46,23 @@ function coverage(expected: string[], actual: string[]): number {
   return expected.filter(word => present.has(word)).length / expected.length;
 }
 
+function oneEditApart(a: string, b: string): boolean {
+  if (Math.min(a.length, b.length) < 5 || Math.abs(a.length - b.length) > 1) return false;
+  let i = 0; let j = 0; let edits = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (++edits > 1) return false;
+    if (a.length >= b.length) i++;
+    if (b.length >= a.length) j++;
+  }
+  return edits + (i < a.length || j < b.length ? 1 : 0) <= 1;
+}
+
+function flexibleCoverage(expected: string[], actual: string[]): number {
+  if (!expected.length) return 0;
+  return expected.reduce((sum, word) => sum + (actual.includes(word) ? 1 : actual.some(candidate => oneEditApart(word, candidate)) ? 0.85 : 0), 0) / expected.length;
+}
+
 function artistTerms(text: string): string[] {
   const all = words(text);
   const meaningful = all.filter(word => !['the', 'and', 'feat', 'featuring', 'ft'].includes(word));
@@ -55,7 +72,7 @@ function artistTerms(text: string): string[] {
 function artistMatches(expected: string, track: BotSpotifyTrack): boolean {
   const wanted = artistTerms(expected);
   const names = [...track.artists.map(artist => artistTerms(artist.name)), artistTerms(track.artists.map(artist => artist.name).join(' '))];
-  return names.some(actual => coverage(wanted, actual) >= 0.8 && coverage(actual, wanted) >= 0.75);
+  return names.some(actual => flexibleCoverage(wanted, actual) >= 0.8 && flexibleCoverage(actual, wanted) >= 0.75);
 }
 
 function parsePair(query: string): [StructuredQuery, StructuredQuery] | null {
@@ -93,8 +110,9 @@ function rank(track: BotSpotifyTrack, query: string, pair: [StructuredQuery, Str
   const fullWords = [...titleWords, ...artistWords];
   if (pair) {
     const scores = pair.map(({ artist, title }) => {
-      const titleMatch = coverage(words(title), titleWords);
-      const artistMatch = coverage(artistTerms(artist), artistTerms(track.artists.map(a => a.name).join(' ')));
+      const titleMatch = flexibleCoverage(words(title), titleWords);
+      const artistMatch = flexibleCoverage(artistTerms(artist), artistTerms(track.artists.map(a => a.name).join(' ')));
+      if (coverage(words(title), titleWords) === 0 && coverage(artistTerms(artist), artistWords) === 0) return null;
       if (titleMatch < 0.8 || !artistMatches(artist, track)) return null;
       return titleMatch + artistMatch + (normal(title) === normal(track.name) ? 1 : 0)
         + (track.artists.some(a => normal(a.name) === normal(artist)) ? 0.5 : 0);
@@ -102,7 +120,7 @@ function rank(track: BotSpotifyTrack, query: string, pair: [StructuredQuery, Str
     return scores.length ? Math.max(...scores) : null;
   }
   const queryWords = words(query);
-  const match = coverage(queryWords, fullWords);
+  const match = queryWords.length > 1 && coverage(queryWords, fullWords) > 0 ? flexibleCoverage(queryWords, fullWords) : coverage(queryWords, fullWords);
   // At least three quarters of the meaningful words must occur in the title or artists.
   // For a single word, it must be an entire word, not part of an unrelated word.
   const repetitiveMatch = repetitiveTitleMatch(query, track);

@@ -380,7 +380,7 @@ export default function ViewerPage() {
           </div>
 
           {/* Карточка 2: Живой поиск и заказ (Левая основная колонка) */}
-          <div className="lg:col-span-7 self-start rounded-3xl bg-[var(--viewer-panel)] backdrop-blur-xl border border-[var(--viewer-panel-border)] p-6 flex flex-col relative">
+          <div className="lg:col-span-7 self-start rounded-3xl bg-[var(--viewer-panel)] backdrop-blur-xl border border-[var(--viewer-panel-border)] p-6 flex flex-col relative z-10">
             <div>
               <h2 id="music-order-heading" className="text-lg font-semibold mb-4 flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-[var(--viewer-accent)]" />
@@ -406,7 +406,7 @@ export default function ViewerPage() {
                 ))}
               </div>
 
-              <div key={provider} id="music-order-form" className="viewer-order-content" role="region" aria-labelledby="music-order-heading">
+              <div key={provider} id="music-order-form" className="viewer-order-content relative z-10" role="region" aria-labelledby="music-order-heading">
 
               {/* Блокировки если закрыто или очередь полная */}
                 {provider === 'spotify' && !isAccepting ? (
