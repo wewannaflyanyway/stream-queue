@@ -367,20 +367,20 @@ export default function ViewerPage() {
               </div>
             </div>
 
-            <div className="w-full sm:w-auto flex items-center justify-between sm:justify-end gap-3 bg-[var(--viewer-surface)] px-4 py-2.5 rounded-2xl border border-[var(--viewer-divider)]">
+            <div className="w-full sm:w-auto sm:shrink-0 flex items-center justify-between sm:justify-end gap-3 whitespace-nowrap bg-[var(--viewer-surface)] px-4 py-2.5 rounded-2xl border border-[var(--viewer-divider)]">
               <span className="text-xs text-[var(--viewer-muted)]">Очередь ожидания:</span>
               <span
                 className={`text-sm font-bold ${
                   isQueueFull ? 'text-[var(--viewer-danger)]' : 'text-[var(--viewer-text)]'
                 }`}
               >
-                В очереди: {pendingCount} / {maxQueueSize}
+                {pendingCount} / {maxQueueSize}
               </span>
             </div>
           </div>
 
           {/* Карточка 2: Живой поиск и заказ (Левая основная колонка) */}
-          <div className="lg:col-span-7 rounded-3xl bg-[var(--viewer-panel)] backdrop-blur-xl border border-[var(--viewer-panel-border)] p-6 flex flex-col justify-between relative">
+          <div className="lg:col-span-7 self-start rounded-3xl bg-[var(--viewer-panel)] backdrop-blur-xl border border-[var(--viewer-panel-border)] p-6 flex flex-col relative">
             <div>
               <h2 id="music-order-heading" className="text-lg font-semibold mb-4 flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-[var(--viewer-accent)]" />

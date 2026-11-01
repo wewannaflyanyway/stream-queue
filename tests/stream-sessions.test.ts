@@ -22,6 +22,8 @@ test('duplicate tracks never produce a falsely precise position or attribution',
   const data = associateQueue(null, [item('same'), item('same')], requests);
   assert.equal(data.queue[0].request, null);
   assert.equal(data.queue[0].ambiguous, true);
+  assert.equal(data.queue[0].possiblyRequested, true);
+  assert.equal(associateQueue(null, [item('other'), item('other')], requests).queue[0].possiblyRequested, false);
   assert.equal(positionForUser('viewer', requests, null, data.queue, true).kind, 'unknown');
 });
 

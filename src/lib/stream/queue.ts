@@ -11,7 +11,7 @@ export interface QueueRequest {
   status: string;
 }
 export interface PlayerItem { uri: string; name: string; artist: string }
-export interface QueueItem extends PlayerItem { request: QueueRequest | null; ambiguous: boolean }
+export interface QueueItem extends PlayerItem { request: QueueRequest | null; ambiguous: boolean; possiblyRequested: boolean }
 
 export function associateQueue(current: PlayerItem | null, queue: PlayerItem[], requests: QueueRequest[]): { current: QueueItem | null; queue: QueueItem[] } {
   const allItems = current ? [current, ...queue] : queue;
@@ -20,7 +20,7 @@ export function associateQueue(current: PlayerItem | null, queue: PlayerItem[], 
     const matchingItems = allItems.filter(candidate => candidate.uri === item.uri);
     const matchingRequests = approved.filter(candidate => candidate.spotify_uri === item.uri);
     const ambiguous = matchingItems.length > 1 || matchingRequests.length > 1;
-    return { ...item, request: !ambiguous && matchingRequests.length === 1 ? matchingRequests[0] : null, ambiguous };
+    return { ...item, request: !ambiguous && matchingRequests.length === 1 ? matchingRequests[0] : null, ambiguous, possiblyRequested: matchingRequests.length > 0 };
   };
   return { current: current ? mapItem(current) : null, queue: queue.map(mapItem) };
 }
