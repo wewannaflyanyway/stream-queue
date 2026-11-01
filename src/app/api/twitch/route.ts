@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { getServiceSupabase } from '@/lib/supabase';
 import { searchSpotifyTracks, addTrackToSpotifyQueue } from '@/lib/spotify';
+import { reconcileStreamState } from '@/lib/stream/lifecycle';
 
 export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams.get('query')?.trim();
@@ -12,6 +13,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const supabase = getServiceSupabase();
+    await reconcileStreamState();
     
     const { data: settings } = await supabase.from('stream_settings').select('*').eq('id', 1).single();
     if (!settings?.is_accepting) {
@@ -21,7 +23,8 @@ export async function GET(req: NextRequest) {
     const { count: pendingCount } = await supabase
       .from('song_requests')
       .select('*', { count: 'exact', head: true })
-      .eq('status', 'pending');
+      .eq('status', 'pending')
+      .eq('stream_pending_archived', false);
       
     if ((pendingCount || 0) >= (settings.max_queue_size || 15)) {
       return new Response(`@${user}, очередь переполнена. Попробуй позже.`);
@@ -80,16 +83,7 @@ export async function GET(req: NextRequest) {
     }
 
     let initialStatus = 'pending';
-    if (settings.auto_approve && !(track.isExplicit && settings.explicit_mode === 'manual')) {
-      try {
-        await addTrackToSpotifyQueue(track.uri);
-        initialStatus = 'approved';
-      } catch {
-        initialStatus = 'pending'; 
-      }
-    }
-
-    await supabase.from('song_requests').insert({
+    const { data: inserted, error: insertError } = await supabase.from('song_requests').insert({
       track_name: track.name,
       artist_name: track.artist,
       album_cover_url: track.albumCover,
@@ -99,7 +93,18 @@ export async function GET(req: NextRequest) {
       sender_name: user,
       source: 'twitch_chat',
       status: initialStatus,
-    });
+    }).select('id').single();
+    if (insertError) return new Response(`@${user}, не удалось сохранить заявку.`);
+    if (settings.auto_approve && !(track.isExplicit && settings.explicit_mode === 'manual')) {
+      const { data: latestSettings } = await supabase.from('stream_settings').select('is_accepting').eq('id', 1).single();
+      if (latestSettings?.is_accepting) {
+        try { await addTrackToSpotifyQueue(track.uri); }
+        catch { return new Response(`@${user}, трек ${track.artist} — ${track.name} отправлен на модерацию.`); }
+        const { error: approvalError } = await supabase.from('song_requests').update({ status: 'approved', queued_at: new Date().toISOString() }).eq('id', inserted.id);
+        if (approvalError) return new Response(`@${user}, трек добавлен в Spotify, но статус заявки не сохранился. Сообщи стримеру.`);
+        initialStatus = 'approved';
+      }
+    }
 
     if (initialStatus === 'approved') {
        return new Response(`@${user}, трек ${track.artist} — ${track.name} сразу добавлен в плеер!`);

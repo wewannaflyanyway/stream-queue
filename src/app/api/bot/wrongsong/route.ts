@@ -16,6 +16,7 @@ export async function GET(req: NextRequest) {
       .select('id, track_name')
       .eq('sender_name', userName.toLowerCase())
       .eq('status', 'pending')
+      .eq('stream_pending_archived', false)
       .order('created_at', { ascending: false })
       .limit(1);
 

@@ -77,6 +77,8 @@ body {
 }
 
 .viewer-page {
+  --viewer-theme-duration: 600ms;
+  --viewer-theme-ease: cubic-bezier(0.22, 0.68, 0.18, 1);
   --viewer-text: #fff;
   --viewer-muted: #a7a7a7;
   --viewer-panel: rgb(255 255 255 / 4%);
@@ -102,42 +104,71 @@ body {
   --viewer-success: #72e59a;
   --viewer-success-soft: rgb(29 185 84 / 15%);
   --viewer-success-border: rgb(29 185 84 / 40%);
+  --viewer-switch-active: #202e25;
   --provider-icon-detail: #121212;
+  position: relative;
+  isolation: isolate;
   color-scheme: dark;
   color: var(--viewer-text);
   background: linear-gradient(180deg, #05180f, #0c100e 45%, #121212);
-  transition: color 180ms ease, background-color 180ms ease;
+  transition: color var(--viewer-theme-duration) var(--viewer-theme-ease);
+}
+
+/* Gradients cannot interpolate directly; fade an opaque YouTube layer over Spotify. */
+.viewer-page::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 78% 0%, rgb(160 36 48 / 17%), transparent 58%),
+    linear-gradient(160deg, #242123, #1b1a1c 42%, #131314 85%);
+  opacity: 0;
+  transition: opacity var(--viewer-theme-duration) var(--viewer-theme-ease);
+}
+
+.viewer-page[data-provider='youtube']::before {
+  opacity: 1;
 }
 
 .viewer-page[data-provider='youtube'] {
-  --viewer-text: #171717;
-  --viewer-muted: #626262;
-  --viewer-panel: #fff;
-  --viewer-panel-border: #e5e5e5;
-  --viewer-surface: #f5f5f5;
-  --viewer-input: #f7f7f7;
-  --viewer-hover: #f0f0f0;
-  --viewer-input-border: #ddd;
-  --viewer-divider: #e9e9e9;
-  --viewer-dropdown: #fff;
-  --viewer-accent: #d60000;
-  --viewer-accent-hover: #b80000;
-  --viewer-accent-soft: #fff1f1;
-  --viewer-accent-medium: #ffebeb;
-  --viewer-accent-strong: #ffe0e0;
-  --viewer-accent-border: #ffc7c7;
-  --viewer-accent-border-strong: #f2a0a0;
-  --viewer-on-accent: #fff;
-  --viewer-neutral: #ececec;
-  --viewer-danger: #b91c1c;
-  --viewer-danger-soft: #fff1f2;
-  --viewer-danger-border: #fecdd3;
-  --viewer-success: #166534;
-  --viewer-success-soft: #f0fdf4;
-  --viewer-success-border: #bbf7d0;
-  --provider-icon-detail: #fff;
-  color-scheme: light;
-  background: linear-gradient(180deg, #fff5f5, #fafafa 42%, #f7f7f7);
+  --viewer-text: #f3f0f1;
+  --viewer-muted: #b2abad;
+  --viewer-panel: rgb(255 255 255 / 4%);
+  --viewer-panel-border: rgb(255 255 255 / 8%);
+  --viewer-surface: rgb(0 0 0 / 24%);
+  --viewer-input: #161517;
+  --viewer-hover: rgb(255 255 255 / 7%);
+  --viewer-input-border: rgb(255 255 255 / 12%);
+  --viewer-divider: rgb(255 255 255 / 7%);
+  --viewer-dropdown: #242023;
+  --viewer-accent: #ff7078;
+  --viewer-accent-hover: #ff8a91;
+  --viewer-accent-soft: rgb(238 74 87 / 8%);
+  --viewer-accent-medium: rgb(238 74 87 / 12%);
+  --viewer-accent-strong: rgb(238 74 87 / 18%);
+  --viewer-accent-border: rgb(255 112 120 / 24%);
+  --viewer-accent-border-strong: rgb(255 112 120 / 38%);
+  --viewer-on-accent: #260c10;
+  --viewer-neutral: rgb(255 255 255 / 9%);
+  --viewer-danger: #ff9aa5;
+  --viewer-danger-soft: rgb(233 75 94 / 10%);
+  --viewer-danger-border: rgb(255 130 145 / 30%);
+  --viewer-success: #83dba4;
+  --viewer-success-soft: rgb(80 170 111 / 12%);
+  --viewer-success-border: rgb(131 219 164 / 28%);
+  --viewer-switch-active: #38292d;
+}
+
+.viewer-page :where(*) {
+  transition-property: color, background-color, border-color, box-shadow;
+  transition-duration: var(--viewer-theme-duration);
+  transition-timing-function: var(--viewer-theme-ease);
+}
+
+.viewer-page input::placeholder {
+  transition: color var(--viewer-theme-duration) var(--viewer-theme-ease);
 }
 
 .viewer-page ::selection {
@@ -146,6 +177,8 @@ body {
 }
 
 .viewer-provider-switch {
+  position: relative;
+  isolation: isolate;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px;
@@ -154,6 +187,27 @@ body {
   border: 1px solid var(--viewer-panel-border);
   border-radius: 16px;
   background: var(--viewer-surface);
+}
+
+.viewer-provider-switch::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 5px auto 5px 5px;
+  width: calc(50% - 7px);
+  border: 1px solid var(--viewer-accent-border);
+  border-radius: 12px;
+  background: var(--viewer-switch-active);
+  box-shadow: 0 3px 12px rgb(0 0 0 / 12%);
+  transform: translateX(0);
+  transition:
+    transform 420ms var(--viewer-theme-ease),
+    background-color var(--viewer-theme-duration) var(--viewer-theme-ease),
+    border-color var(--viewer-theme-duration) var(--viewer-theme-ease);
+}
+
+.viewer-page[data-provider='youtube'] .viewer-provider-switch::before {
+  transform: translateX(calc(100% + 4px));
 }
 
 .viewer-provider-button {
@@ -170,7 +224,9 @@ body {
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease;
+  transition:
+    color var(--viewer-theme-duration) var(--viewer-theme-ease),
+    background-color 180ms ease;
 }
 
 .viewer-provider-button:hover {
@@ -179,10 +235,8 @@ body {
 }
 
 .viewer-provider-button[aria-pressed='true'] {
-  border-color: var(--viewer-accent-border);
   color: var(--viewer-accent);
-  background: var(--viewer-panel);
-  box-shadow: 0 2px 8px rgb(0 0 0 / 5%);
+  background: transparent;
 }
 
 .viewer-provider-button:focus-visible {
@@ -195,7 +249,7 @@ body {
 }
 
 .viewer-provider-button[data-provider='youtube'] svg {
-  color: #ed1616;
+  color: #ff454b;
 }
 
 .viewer-provider-button:disabled {
@@ -231,13 +285,25 @@ body {
   background: rgb(214 0 0 / 7%);
 }
 
-.viewer-page[data-provider='youtube'] .viewer-source-mark[data-provider='spotify'] {
-  color: #16843d;
+.viewer-order-content {
+  animation: viewer-content-enter 300ms ease-out both;
+}
+
+@keyframes viewer-content-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .viewer-page,
-  .viewer-provider-button {
-    transition: none;
+  .viewer-page::before,
+  .viewer-page *,
+  .viewer-provider-switch::before,
+  .viewer-page input::placeholder {
+    transition: none !important;
+  }
+
+  .viewer-order-content {
+    animation: none;
   }
 }

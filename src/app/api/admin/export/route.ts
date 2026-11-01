@@ -1,11 +1,17 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getStreamerAccessToken } from '@/lib/spotify';
 import { getServiceSupabase } from '@/lib/supabase';
+import { readStreamState } from '@/lib/stream/lifecycle';
 
-export async function POST() {
+export async function POST(request: NextRequest) {
   try {
+    const body = await request.json();
+    if (!process.env.ADMIN_PIN || body.pin !== process.env.ADMIN_PIN) return NextResponse.json({ error: 'Неверный PIN-код доступа' }, { status: 401 });
+    if (body.sessionId !== null && body.sessionId !== undefined && (typeof body.sessionId !== 'string' || !/^[0-9a-f-]{36}$/i.test(body.sessionId))) return NextResponse.json({ error: 'Некорректный стрим.' }, { status: 400 });
     const token = await getStreamerAccessToken();
     const supabase = getServiceSupabase();
+    const stream = await readStreamState();
+    if (stream?.automation_enabled && !body.sessionId) return NextResponse.json({ error: 'Нет истории текущего стрима для экспорта.' }, { status: 400 });
 
     // 1. Получаем профиль пользователя
     const userRes = await fetch('https://api.spotify.com/v1/me', {
@@ -18,11 +24,13 @@ export async function POST() {
     const userData = await userRes.json();
 
     // 2. Достаем треки из базы
-    const { data: tracks, error: dbError } = await supabase
+    let query = supabase
       .from('song_requests')
       .select('spotify_uri')
       .in('status', ['played', 'approved'])
       .order('created_at', { ascending: true });
+    if (body.sessionId) query = query.eq('stream_session_id', body.sessionId).eq('stream_history_hidden', false);
+    const { data: tracks, error: dbError } = await query;
 
     if (dbError) {
       return NextResponse.json({ error: 'Ошибка базы данных' }, { status: 500 });

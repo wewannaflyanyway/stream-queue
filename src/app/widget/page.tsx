@@ -43,6 +43,21 @@ export default function WidgetPage() {
   const [clientError, setClientError] = useState<string | null>(null);
   const failCountRef = useRef(0);
 
+  // The existing OBS source also provides periodic playback observations while it is open.
+  useEffect(() => {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let controller: AbortController;
+    async function sync() {
+      controller = new AbortController();
+      const deadline = setTimeout(() => controller.abort(), 8000);
+      try { await fetch('/api/viewer/stream', { signal: controller.signal }); } catch { /* The music widget can keep working independently. */ }
+      finally { clearTimeout(deadline); if (!stopped) timer = setTimeout(sync, 15000); }
+    }
+    void sync();
+    return () => { stopped = true; clearTimeout(timer); controller?.abort(); };
+  }, []);
+
   useEffect(() => {
     let isMounted = true;
     let timeoutId: number | undefined;

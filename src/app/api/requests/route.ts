@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServiceSupabase } from '@/lib/supabase';
 import { addTrackToSpotifyQueue } from '@/lib/spotify';
+import { reconcileStreamState } from '@/lib/stream/lifecycle';
 
 export async function POST(req: NextRequest) {
   try {
@@ -21,6 +22,7 @@ export async function POST(req: NextRequest) {
     }
 
     const supabase = getServiceSupabase();
+    await reconcileStreamState();
 
     // 1. Загружаем актуальные настройки стрима
     const { data: settings, error: settingsErr } = await supabase
@@ -41,7 +43,8 @@ export async function POST(req: NextRequest) {
     const { count: pendingCount } = await supabase
       .from('song_requests')
       .select('*', { count: 'exact', head: true })
-      .eq('status', 'pending');
+      .eq('status', 'pending')
+      .eq('stream_pending_archived', false);
 
     if ((pendingCount || 0) >= settings.max_queue_size) {
       return NextResponse.json(
@@ -114,16 +117,6 @@ export async function POST(req: NextRequest) {
     let initialStatus = 'pending';
     const shouldHoldExplicit = is_explicit && settings.explicit_mode === 'manual';
 
-    if (settings.auto_approve && !shouldHoldExplicit) {
-      try {
-        await addTrackToSpotifyQueue(spotify_uri);
-        initialStatus = 'approved';
-      } catch (e) {
-        // Если плеер Spotify спит — оставляем заявку в pending, чтобы не потерять её
-        initialStatus = 'pending';
-      }
-    }
-
     const cleanSender = (sender_name || '').trim().slice(0, 24) || 'Аноним';
 
     const { data: inserted, error: insertErr } = await supabase
@@ -143,7 +136,23 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (insertErr) {
+      if (insertErr.message.includes('Прием заявок закрыт')) return NextResponse.json({ error: 'Прием музыки сейчас закрыт стримером' }, { status: 403 });
       return NextResponse.json({ error: 'Ошибка сохранения заявки в БД' }, { status: 500 });
+    }
+
+    if (settings.auto_approve && !shouldHoldExplicit) {
+      const { data: latestSettings } = await supabase.from('stream_settings').select('is_accepting').eq('id', 1).single();
+      if (latestSettings?.is_accepting) {
+        try {
+          await addTrackToSpotifyQueue(spotify_uri);
+        } catch {
+          return NextResponse.json({ request: inserted, status: 'pending' });
+        }
+        const { data: approved, error: approvalError } = await supabase.from('song_requests').update({ status: 'approved', queued_at: new Date().toISOString() }).eq('id', inserted.id).select().single();
+        if (approvalError) return NextResponse.json({ error: 'Трек добавлен в Spotify, но статус не сохранился. Сообщите стримеру и не отправляйте его повторно.' }, { status: 500 });
+        initialStatus = 'approved';
+        return NextResponse.json({ request: approved, status: initialStatus });
+      }
     }
 
     return NextResponse.json({ request: inserted, status: initialStatus });

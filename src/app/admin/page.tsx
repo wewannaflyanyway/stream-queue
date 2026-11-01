@@ -63,6 +63,10 @@ export default function AdminPage() {
 
   const [settings, setSettings] = useState<any>(null);
   const [requests, setRequests] = useState<any[]>([]);
+  const [streamState, setStreamState] = useState<{ online: boolean; automationEnabled: boolean; sessionId: string | null; connectionHealthy: boolean; verified: boolean } | null>(null);
+  const [streamBusy, setStreamBusy] = useState(false);
+  const [streamSessions, setStreamSessions] = useState<{ id: string; started_at: string; ended_at: string | null }[]>([]);
+  const [historySession, setHistorySession] = useState('current');
   const [activeTab, setActiveTab] = useState<'queue' | 'history' | 'settings' | 'widget' | 'polls'>('queue');
   const [toast, setToast] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
@@ -120,12 +124,14 @@ export default function AdminPage() {
         soundEnabledRef.current = sData.sound_alerts;
       }
 
-      const { data: rData } = await supabase
-        .from('song_requests')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(100);
-      if (rData) setRequests(rData);
+      const allRequests = [];
+      for (let offset = 0; ; offset += 1000) {
+        const { data: rData, error } = await supabase.from('song_requests').select('*').order('created_at', { ascending: false }).order('id', { ascending: false }).range(offset, offset + 999);
+        if (error || !rData) break;
+        allRequests.push(...rData);
+        if (rData.length < 1000) break;
+      }
+      setRequests(allRequests);
     };
 
     loadAll();
@@ -168,10 +174,40 @@ export default function AdminPage() {
     };
   }, [isAuthorized]);
 
+  useEffect(() => {
+    if (!isAuthorized) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    async function refresh() {
+      try {
+        const response = await fetch('/api/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin, action: 'stream_status' }), signal: AbortSignal.timeout(8000) });
+        if (response.ok) {
+          const data = await response.json();
+          if (!stopped) setStreamState(data.stream);
+        } else if (!stopped) {
+          setStreamState(previous => previous && { ...previous, verified: false });
+        }
+      } catch { if (!stopped) setStreamState(previous => previous && { ...previous, verified: false }); }
+      finally { if (!stopped) timer = setTimeout(refresh, 15000); }
+    }
+    void refresh();
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [isAuthorized, pin]);
+
+  useEffect(() => {
+    if (!isAuthorized || activeTab !== 'history' || !streamState?.automationEnabled) return;
+    let cancelled = false;
+    void fetch('/api/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin, action: 'stream_sessions' }), signal: AbortSignal.timeout(8000) })
+      .then(response => response.ok ? response.json() : null)
+      .then(data => { if (!cancelled && data) setStreamSessions(data.sessions); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [isAuthorized, activeTab, streamState?.automationEnabled, streamState?.sessionId, pin]);
+
   // Универсальный вызов API админки
   const callAdminApi = async (action: string, payload: any = {}, customPin?: string) => {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const timeoutId = setTimeout(() => controller.abort(), action === 'stream_enable' ? 60000 : 8000);
     try {
       const res = await fetch('/api/admin', {
         method: 'POST',
@@ -198,8 +234,11 @@ export default function AdminPage() {
     setSettings((prev: any) => ({ ...prev, [key]: nextVal }));
     if (key === 'sound_alerts') soundEnabledRef.current = nextVal;
     try {
-      await callAdminApi('update_settings', { [key]: nextVal });
+      const result = await callAdminApi(key === 'is_accepting' ? 'set_accepting' : 'update_settings', { [key]: nextVal });
+      if (key === 'is_accepting') setSettings((prev: any) => ({ ...prev, is_accepting: result.is_accepting }));
     } catch (e: any) {
+      setSettings((prev: any) => ({ ...prev, [key]: currentVal }));
+      if (key === 'sound_alerts') soundEnabledRef.current = currentVal;
       showToast(e.message, 'err');
     }
   };
@@ -260,7 +299,7 @@ export default function AdminPage() {
   const handleClearQueue = async () => {
     if (!confirm('Точно отклонить ВСЕ ожидающие треки в очереди?')) return;
     const previousRequests = [...requests];
-    setRequests((prev) => prev.map((r) => (r.status === 'pending' ? { ...r, status: 'rejected' } : r)));
+    setRequests((prev) => prev.map((r) => (r.status === 'pending' && !r.stream_pending_archived ? { ...r, status: 'rejected' } : r)));
     try {
       await callAdminApi('clear_queue');
       showToast('Очередь ожидания очищена');
@@ -272,11 +311,11 @@ export default function AdminPage() {
 
   // Очистить историю
   const handleClearHistory = async () => {
-    if (!confirm('Точно удалить всю историю одобренных и отклоненных треков? Это действие необратимо.')) return;
+    if (!confirm(streamState?.automationEnabled ? 'Скрыть историю текущего стрима? Записи и очередь сохранятся.' : 'Точно удалить всю историю одобренных и отклоненных треков? Это действие необратимо.')) return;
     try {
       await callAdminApi('clear_history');
-      showToast('История полностью очищена');
-      setRequests((prev) => prev.filter((r) => r.status === 'pending'));
+      showToast(streamState?.automationEnabled ? 'История текущего стрима скрыта' : 'История полностью очищена');
+      setRequests((prev) => prev.filter((r) => r.status === 'pending' || (streamState?.automationEnabled && r.stream_session_id !== streamState.sessionId)));
     } catch (e: any) {
       showToast(e.message, 'err');
     }
@@ -286,7 +325,7 @@ export default function AdminPage() {
   const handleExportPlaylist = async () => {
     setIsExporting(true);
     try {
-      const res = await fetch('/api/admin/export', { method: 'POST' });
+      const res = await fetch('/api/admin/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin, sessionId: streamState?.automationEnabled ? (historySession === 'current' ? streamState.sessionId : historySession) : null }) });
       const data = await res.json();
       if (data.url) {
         showToast('Плейлист успешно создан!');
@@ -351,8 +390,9 @@ export default function AdminPage() {
     );
   }
 
-  const pendingList = requests.filter((r) => r.status === 'pending');
-  const approvedHistory = requests.filter((r) => r.status === 'approved');
+  const pendingList = requests.filter((r) => r.status === 'pending' && !r.stream_pending_archived);
+  const selectedSessionId = historySession === 'current' ? streamState?.sessionId : historySession;
+  const approvedHistory = streamState ? requests.filter((r) => (['approved', 'played'].includes(r.status) || (streamState.automationEnabled && historySession !== 'current' && r.status === 'pending' && r.stream_pending_archived)) && (!streamState.automationEnabled || (selectedSessionId && r.stream_session_id === selectedSessionId && !r.stream_history_hidden))) : [];
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#05180f] via-[#0c100e] to-[#121212] text-white font-sans">
@@ -448,6 +488,22 @@ export default function AdminPage() {
               Очистить очередь
             </button>
           </div>
+        </div>
+
+        <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+          <div><p className="text-sm font-semibold">Стрим Twitch: {streamState?.automationEnabled ? !streamState.connectionHealthy ? 'подписка требует восстановления' : !streamState.verified ? 'не удалось проверить' : streamState.online ? 'в эфире' : 'не в эфире' : 'автоматическое управление выключено'}</p><p className="text-xs text-[#A7A7A7] mt-1">При обрыве до 30 минут история сохраняется; ручная пауза заказов имеет приоритет.</p></div>
+          <button type="button" disabled={streamBusy} onClick={async () => {
+            setStreamBusy(true);
+            try {
+              await callAdminApi(streamState?.automationEnabled && streamState.connectionHealthy ? 'stream_disable' : 'stream_enable');
+              const response = await fetch('/api/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin, action: 'stream_status' }) });
+              if (response.ok) setStreamState((await response.json()).stream);
+              const { data } = await supabase.from('stream_settings').select('*').eq('id', 1).single();
+              if (data) setSettings(data);
+              showToast(streamState?.automationEnabled && streamState.connectionHealthy ? 'Автоматическое управление выключено' : 'Автоматическое управление включено');
+            } catch (e: any) { showToast(e.message, 'err'); }
+            finally { setStreamBusy(false); }
+          }} className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-semibold cursor-pointer disabled:opacity-50">{streamBusy ? 'Подключение…' : streamState?.automationEnabled ? streamState.connectionHealthy ? 'Выключить автоматику' : 'Восстановить подключение' : 'Включить автоматику Twitch'}</button>
         </div>
 
         {/* Навигация по вкладкам */}
@@ -597,6 +653,7 @@ export default function AdminPage() {
        {/* ВКЛАДКА 2: ИСТОРИЯ СТРИМА */}
         {activeTab === 'history' && (
           <div className="rounded-3xl bg-white/[0.04] backdrop-blur-xl border border-white/[0.08] overflow-hidden">
+            {streamState?.automationEnabled && <label className="flex items-center gap-3 px-5 pt-5 text-xs text-[#A7A7A7]">Период<select value={historySession} onChange={e => setHistorySession(e.target.value)} className="rounded-xl bg-[#1d1d1d] border border-white/10 px-3 py-2 text-white"><option value="current">Текущий / последний стрим</option>{streamSessions.filter(session => session.id !== streamState.sessionId).map(session => <option key={session.id} value={session.id}>{new Date(session.started_at).toLocaleString('ru-RU')}</option>)}</select></label>}
             {/* Шапка с кнопкой очистки и экспорта */}
             <div className="p-4 border-b border-white/[0.08] flex items-center justify-between bg-black/20">
               <span className="text-sm font-semibold text-white">Управление историей</span>
@@ -604,7 +661,7 @@ export default function AdminPage() {
                 <button
                   type="button"
                   onClick={handleExportPlaylist}
-                  disabled={isExporting || approvedHistory.length === 0}
+                  disabled={isExporting || !approvedHistory.some(item => ['approved', 'played'].includes(item.status))}
                   className="px-3 py-1.5 rounded-xl bg-[#1DB954] hover:bg-[#1ed760] text-black text-xs font-bold flex items-center gap-2 transition disabled:opacity-50 cursor-pointer"
                 >
                   {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ListMusic className="w-3.5 h-3.5" />}
@@ -613,7 +670,7 @@ export default function AdminPage() {
                 <button
                   type="button"
                   onClick={handleClearHistory}
-                  disabled={approvedHistory.length === 0}
+                  disabled={approvedHistory.length === 0 || (streamState?.automationEnabled && historySession !== 'current')}
                   className="px-3 py-1.5 rounded-xl bg-[#E91429]/15 hover:bg-[#E91429]/25 border border-[#E91429]/30 text-[#ff6b78] text-xs font-semibold flex items-center gap-2 transition disabled:opacity-40 cursor-pointer"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -638,7 +695,7 @@ export default function AdminPage() {
                         <p className="text-sm font-semibold text-white truncate">
                           {item.track_name}
                         </p>
-                        <p className="text-xs text-[#A7A7A7] truncate">{item.artist_name}</p>
+                        <p className="text-xs text-[#A7A7A7] truncate">{item.artist_name}{item.stream_pending_archived ? ' · осталась на модерации' : ''}</p>
                       </div>
                     </div>
                     <div className="text-right shrink-0">

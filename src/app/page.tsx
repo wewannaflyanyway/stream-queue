@@ -3,7 +3,8 @@
 import React, { useState, useEffect, useRef, useSyncExternalStore } from 'react';
 import { supabase } from '@/lib/supabase';
 import ProviderIcon from '@/components/provider-icon';
-import { getRequestProvider, MUSIC_PROVIDER_NAMES, type MusicProvider } from '@/lib/music-provider';
+import ViewerStreamPanel, { type ViewerLiveStatus } from '@/components/viewer-stream-panel';
+import { MUSIC_PROVIDER_NAMES, type MusicProvider } from '@/lib/music-provider';
 import {
   Search,
   Music,
@@ -14,7 +15,6 @@ import {
   X,
   User,
   ShieldAlert,
-  ListMusic,
   Send,
   Loader2,
 } from 'lucide-react';
@@ -40,21 +40,6 @@ interface StreamSettings {
   banned_words: string;
   banned_artists: string;
   rules_text: string;
-}
-
-interface SongRequest {
-  id: string;
-  created_at: string;
-  track_name: string;
-  artist_name: string;
-  album_cover_url: string;
-  spotify_uri: string;
-  provider?: MusicProvider;
-  youtube_video_id?: string | null;
-  duration_ms: number;
-  is_explicit: boolean;
-  sender_name: string;
-  status: 'pending' | 'approved' | 'rejected' | 'played';
 }
 
 function formatDuration(ms: number) {
@@ -92,7 +77,8 @@ function getSavedViewerName() {
 export default function ViewerPage() {
   const [provider, setProvider] = useState<MusicProvider>('spotify');
   const [settings, setSettings] = useState<StreamSettings | null>(null);
-  const [queue, setQueue] = useState<SongRequest[]>([]);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [liveStatus, setLiveStatus] = useState<ViewerLiveStatus>('unknown');
   const [query, setQuery] = useState('');
   const [search, setSearch] = useState<SearchState>(EMPTY_SEARCH);
   const [selectedTrack, setSelectedTrack] = useState<Track | null>(null);
@@ -142,13 +128,12 @@ export default function ViewerPage() {
         .single();
       if (sData) setSettings(sData);
 
-      const { data: qData } = await supabase
+      const { count } = await supabase
         .from('song_requests')
-        .select('*')
-        .in('status', ['pending', 'approved'])
-        .order('created_at', { ascending: false })
-        .limit(20);
-      if (qData) setQueue(qData);
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'pending')
+        .eq('stream_pending_archived', false);
+      if (count !== null) setPendingCount(count);
     };
 
     fetchInitialData();
@@ -166,13 +151,12 @@ export default function ViewerPage() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'song_requests' },
         async () => {
-          const { data: qData } = await supabase
+          const { count } = await supabase
             .from('song_requests')
-            .select('*')
-            .in('status', ['pending', 'approved'])
-            .order('created_at', { ascending: false })
-            .limit(20);
-          if (qData) setQueue(qData);
+            .select('id', { count: 'exact', head: true })
+            .eq('status', 'pending')
+            .eq('stream_pending_archived', false);
+          if (count !== null) setPendingCount(count);
         }
       )
       .subscribe();
@@ -271,10 +255,9 @@ export default function ViewerPage() {
     return null;
   };
 
-  const pendingCount = queue.filter((r) => r.status === 'pending').length;
   const maxQueueSize = settings?.max_queue_size || 15;
   const isQueueFull = pendingCount >= maxQueueSize;
-  const isAccepting = settings?.is_accepting ?? true;
+  const isAccepting = (settings?.is_accepting ?? false) && (liveStatus === 'online' || liveStatus === 'unmanaged');
   const validationError = getValidationError(selectedTrack);
 
   // 5. Отправка трека
@@ -355,6 +338,10 @@ export default function ViewerPage() {
                   <h1 className="text-xl md:text-2xl font-bold tracking-tight">
                     wewannaflyanyway • Music
                   </h1>
+                  <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold border ${liveStatus === 'online' ? 'bg-[var(--viewer-success-soft)] text-[var(--viewer-success)] border-[var(--viewer-success-border)]' : 'bg-[var(--viewer-neutral)] text-[var(--viewer-muted)] border-[var(--viewer-input-border)]'}`}>
+                    <span className="w-2 h-2 rounded-full bg-current" />
+                    {liveStatus === 'online' ? 'Стрим онлайн' : liveStatus === 'offline' ? 'Стрим офлайн' : liveStatus === 'unmanaged' ? 'Автостатус не включён' : 'Статус стрима недоступен'}
+                  </span>
                   {provider === 'youtube' ? (
                     <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-[var(--viewer-accent-medium)] text-[var(--viewer-accent)] border border-[var(--viewer-accent-border)]">
                       <span className="w-2 h-2 rounded-full bg-[var(--viewer-accent)]" />
@@ -419,7 +406,7 @@ export default function ViewerPage() {
                 ))}
               </div>
 
-              <div id="music-order-form" role="region" aria-labelledby="music-order-heading">
+              <div key={provider} id="music-order-form" className="viewer-order-content" role="region" aria-labelledby="music-order-heading">
 
               {/* Блокировки если закрыто или очередь полная */}
                 {provider === 'spotify' && !isAccepting ? (
@@ -648,58 +635,7 @@ export default function ViewerPage() {
               </div>
             </div>
 
-            {/* Карточка 4: Текущие заявки (Без картинок) */}
-            <div className="rounded-3xl bg-[var(--viewer-panel)] backdrop-blur-xl border border-[var(--viewer-panel-border)] p-6 flex-1">
-              <h2 className="text-base font-semibold mb-3.5 flex items-center justify-between">
-                <span className="flex items-center gap-2">
-                  <ListMusic className="w-4 h-4 text-[var(--viewer-accent)]" />
-                  Ближайшие заявки
-                </span>
-                <span className="text-xs font-normal text-[var(--viewer-muted)]">Live</span>
-              </h2>
-
-              {queue.length === 0 ? (
-                <div className="text-center py-8 text-xs text-[var(--viewer-muted)]">
-                  В очереди пока пусто — будь первым!
-                </div>
-              ) : (
-                <div className="space-y-2.5">
-                  {queue.slice(0, 5).map((item) => (
-                    <div
-                      key={item.id}
-                      className="p-2.5 rounded-2xl bg-[var(--viewer-surface)] border border-[var(--viewer-divider)] flex items-center gap-3"
-                    >
-                      <div
-                        className="viewer-source-mark"
-                        data-provider={getRequestProvider(item)}
-                        role="img"
-                        aria-label={`Источник: ${MUSIC_PROVIDER_NAMES[getRequestProvider(item)]}`}
-                        title={MUSIC_PROVIDER_NAMES[getRequestProvider(item)]}
-                      >
-                        <ProviderIcon provider={getRequestProvider(item)} className="w-5 h-5" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-xs font-semibold text-[var(--viewer-text)] truncate">
-                          {item.track_name}
-                        </p>
-                        <p className="text-[11px] text-[var(--viewer-muted)] truncate">
-                          {item.artist_name} • от {item.sender_name}
-                        </p>
-                      </div>
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-medium shrink-0 ${
-                          item.status === 'approved'
-                            ? 'bg-[var(--viewer-accent-medium)] text-[var(--viewer-accent)] border border-[var(--viewer-accent-border)]'
-                            : 'bg-[var(--viewer-neutral)] text-[var(--viewer-muted)]'
-                        }`}
-                      >
-                        {item.status === 'approved' ? 'В плеере' : 'Ждет'}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            <ViewerStreamPanel onLiveStatus={setLiveStatus} />
           </div>
         </div>
       </div>

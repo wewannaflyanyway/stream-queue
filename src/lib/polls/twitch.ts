@@ -28,8 +28,8 @@ async function appToken(): Promise<string> {
   })();
   try { return await tokenRequest; } finally { tokenRequest = null; }
 }
-async function helix(path: string, init: RequestInit = {}, retry = true): Promise<Response> {
-  const res = await fetch(`https://api.twitch.tv/helix/${path}`, { ...init, headers: { 'Client-Id': twitchConfig().clientId, Authorization: `Bearer ${await appToken()}`, 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(10_000), cache: 'no-store' });
+export async function helix(path: string, init: RequestInit = {}, retry = true): Promise<Response> {
+  const res = await fetch(`https://api.twitch.tv/helix/${path}`, { ...init, headers: { 'Client-Id': twitchConfig().clientId, Authorization: `Bearer ${await appToken()}`, 'Content-Type': 'application/json' }, signal: init.signal ?? AbortSignal.timeout(10_000), cache: 'no-store' });
   if (res.status === 401 && retry) { tokenCache = null; return helix(path, init, false); }
   return res;
 }
