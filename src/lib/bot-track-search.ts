@@ -1,4 +1,4 @@
-/** Matching logic for text requests from chat. Spotify's ranking alone is not proof of a match. */
+/** Spotify's own ranking is used for chat requests, as it was before strict matching. */
 export interface BotSpotifyTrack {
   id: string;
   uri: string;
@@ -9,84 +9,7 @@ export interface BotSpotifyTrack {
   explicit: boolean;
 }
 
-export type BotSearchResult =
-  | { kind: 'match'; track: BotSpotifyTrack }
-  | { kind: 'uncertain' }
-  | { kind: 'not_found' };
-
-type StructuredQuery = { artist: string; title: string };
-
-function words(text: string): string[] {
-  return [...new Set((text.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('ru').replace(/ё/g, 'е').replace(/(?<=[\p{L}\p{N}])[.'’](?=[\p{L}\p{N}])/gu, '').match(/[\p{L}\p{N}]+/gu) ?? []))];
-}
-
-function normal(text: string): string {
-  return words(text).join(' ');
-}
-
-function repeatedSyllable(text: string): string | null {
-  const compact = text.normalize('NFKD').toLocaleLowerCase('ru').replace(/[^\p{L}\p{N}]/gu, '');
-  return /^(\p{L}{1,3})\1{2,}$/u.exec(compact)?.[1] ?? null;
-}
-
-function repetitiveTitleMatch(query: string, track: BotSpotifyTrack): boolean {
-  const normalizedQuery = query.normalize('NFKD').toLocaleLowerCase('ru').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
-  return track.artists.some(artist => {
-    const name = artist.name.normalize('NFKD').toLocaleLowerCase('ru').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
-    if (!name) return false;
-    const remainder = normalizedQuery.startsWith(`${name} `) ? normalizedQuery.slice(name.length + 1) : normalizedQuery.endsWith(` ${name}`) ? normalizedQuery.slice(0, -name.length - 1) : '';
-    const wanted = repeatedSyllable(remainder);
-    return wanted !== null && wanted === repeatedSyllable(track.name);
-  });
-}
-
-function coverage(expected: string[], actual: string[]): number {
-  if (!expected.length) return 0;
-  const present = new Set(actual);
-  return expected.filter(word => present.has(word)).length / expected.length;
-}
-
-function oneEditApart(a: string, b: string): boolean {
-  if (Math.min(a.length, b.length) < 5 || Math.abs(a.length - b.length) > 1) return false;
-  let i = 0; let j = 0; let edits = 0;
-  while (i < a.length && j < b.length) {
-    if (a[i] === b[j]) { i++; j++; continue; }
-    if (++edits > 1) return false;
-    if (a.length >= b.length) i++;
-    if (b.length >= a.length) j++;
-  }
-  return edits + (i < a.length || j < b.length ? 1 : 0) <= 1;
-}
-
-function flexibleCoverage(expected: string[], actual: string[]): number {
-  if (!expected.length) return 0;
-  return expected.reduce((sum, word) => sum + (actual.includes(word) ? 1 : actual.some(candidate => oneEditApart(word, candidate)) ? 0.85 : 0), 0) / expected.length;
-}
-
-function artistTerms(text: string): string[] {
-  const all = words(text);
-  const meaningful = all.filter(word => !['the', 'and', 'feat', 'featuring', 'ft'].includes(word));
-  return meaningful.length ? meaningful : all;
-}
-
-function artistMatches(expected: string, track: BotSpotifyTrack): boolean {
-  const wanted = artistTerms(expected);
-  const names = [...track.artists.map(artist => artistTerms(artist.name)), artistTerms(track.artists.map(artist => artist.name).join(' '))];
-  return names.some(actual => flexibleCoverage(wanted, actual) >= 0.8 && flexibleCoverage(actual, wanted) >= 0.75);
-}
-
-function parsePair(query: string): [StructuredQuery, StructuredQuery] | null {
-  // Require spaces around a hyphen so titles such as Ben-10 and AC-DC remain intact.
-  const parts = query.split(/\s+[-–—]\s+/u);
-  if (parts.length !== 2 || !words(parts[0]).length || !words(parts[1]).length) return null;
-  const [left, right] = parts.map(part => part.trim());
-  return [{ artist: left, title: right }, { artist: right, title: left }];
-}
-
-function fieldValue(value: string): string {
-  // Field syntax is constructed by us, not interpolated as Spotify operators.
-  return value.replace(/["\\:]/g, ' ').replace(/\s+/g, ' ').trim();
-}
+export type BotSearchResult = { kind: 'match'; track: BotSpotifyTrack } | { kind: 'not_found' };
 
 export function spotifyTrackId(input: string): string | null {
   const value = input.trim();
@@ -104,62 +27,14 @@ export function looksLikeSpotifyLink(input: string): boolean {
   return /spotify\.com|^spotify:/i.test(input.trim());
 }
 
-function rank(track: BotSpotifyTrack, query: string, pair: [StructuredQuery, StructuredQuery] | null): number | null {
-  const titleWords = words(track.name);
-  const artistWords = words(track.artists.map(artist => artist.name).join(' '));
-  const fullWords = [...titleWords, ...artistWords];
-  if (pair) {
-    const scores = pair.map(({ artist, title }) => {
-      const titleMatch = flexibleCoverage(words(title), titleWords);
-      const artistMatch = flexibleCoverage(artistTerms(artist), artistTerms(track.artists.map(a => a.name).join(' ')));
-      if (coverage(words(title), titleWords) === 0 && coverage(artistTerms(artist), artistWords) === 0) return null;
-      if (titleMatch < 0.8 || !artistMatches(artist, track)) return null;
-      return titleMatch + artistMatch + (normal(title) === normal(track.name) ? 1 : 0)
-        + (track.artists.some(a => normal(a.name) === normal(artist)) ? 0.5 : 0);
-    }).filter((score): score is number => score !== null);
-    return scores.length ? Math.max(...scores) : null;
-  }
-  const queryWords = words(query);
-  const match = queryWords.length > 1 && coverage(queryWords, fullWords) > 0 ? flexibleCoverage(queryWords, fullWords) : coverage(queryWords, fullWords);
-  // At least three quarters of the meaningful words must occur in the title or artists.
-  // For a single word, it must be an entire word, not part of an unrelated word.
-  const repetitiveMatch = repetitiveTitleMatch(query, track);
-  if (!queryWords.length || (match < 0.75 && !repetitiveMatch)) return null;
-  const exactTitle = normal(query) === normal(track.name);
-  const exactArtist = track.artists.some(a => normal(a.name) === normal(query));
-  const exactCombination = track.artists.some(a =>
-    normal(query) === normal(`${a.name} ${track.name}`) || normal(query) === normal(`${track.name} ${a.name}`));
-  return match + (repetitiveMatch ? 1.5 : 0) + (exactTitle ? 1 : 0) + (exactArtist ? 0.5 : 0) + (exactCombination ? 0.5 : 0)
-    + (coverage(queryWords, titleWords) === 1 ? 0.1 : 0);
-}
-
-function identity(track: BotSpotifyTrack): string {
-  return `${normal(track.name)}|${normal(track.artists[0]?.name ?? '')}`;
-}
-
 export async function resolveBotTextSearch(
   query: string,
   search: (spotifyQuery: string) => Promise<BotSpotifyTrack[]>,
 ): Promise<BotSearchResult> {
-  const pair = parsePair(query);
-  const queries = pair
-    ? pair.map(({ artist, title }) => `artist:"${fieldValue(artist)}" track:"${fieldValue(title)}"`)
-    : [query];
-  const results = await Promise.all(queries.map(search));
-  const candidates = results.flat();
-  if (!candidates.length) return { kind: 'not_found' };
-  const ranked = candidates
-    .filter(track => typeof track?.id === 'string' && typeof track.name === 'string'
-      && typeof track.uri === 'string' && Number.isFinite(track.duration_ms)
-      && Array.isArray(track.artists) && track.artists.length > 0
-      && track.artists.every(artist => typeof artist?.name === 'string'))
-    .map(track => ({ track, score: rank(track, query, pair) }))
-    .filter((candidate): candidate is { track: BotSpotifyTrack; score: number } => candidate.score !== null)
-    .sort((a, b) => b.score - a.score);
-  if (!ranked.length) return { kind: 'uncertain' };
-  const best = ranked[0];
-  // Multiple catalog entries for the same title and artist aren't distinct choices.
-  const runnerUp = ranked.find(candidate => identity(candidate.track) !== identity(best.track));
-  if (runnerUp && best.score - runnerUp.score < 0.15) return { kind: 'uncertain' };
-  return { kind: 'match', track: best.track };
+  const candidates = await search(query);
+  const track = candidates.find(candidate => typeof candidate?.id === 'string'
+    && typeof candidate.name === 'string' && typeof candidate.uri === 'string'
+    && Number.isFinite(candidate.duration_ms) && Array.isArray(candidate.artists)
+    && candidate.artists.length > 0 && candidate.artists.every(artist => typeof artist?.name === 'string'));
+  return track ? { kind: 'match', track } : { kind: 'not_found' };
 }

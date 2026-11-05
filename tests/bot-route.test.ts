@@ -3,7 +3,7 @@ import { mock, test } from 'node:test';
 import { NextRequest } from 'next/server';
 import type { BotSpotifyTrack } from '../src/lib/bot-track-search';
 
-test('chat requests never enqueue uncertain results and preserve direct links', async () => {
+test('chat requests use Spotify ranking, preserve links and handle Spotify errors', async () => {
   const saved: Record<string, unknown>[] = [];
   const spotifyRequests: string[] = [];
   let queueCalls = 0;
@@ -42,8 +42,8 @@ test('chat requests never enqueue uncertain results and preserve direct links', 
       return (await GET(new NextRequest(url))).text();
     };
 
-    candidates = [{ ...track, name: 'JOHN CENA', artists: [{ name: 'Joey Valence & Brae' }] }];
-    assert.match(await run('Opening Theme Ben-10 Classic'), /не удалось уверенно определить/);
+    candidates = [];
+    assert.match(await run('Opening Theme Ben-10 Classic'), /трек не найден/);
     assert.equal(saved.length, 0);
     assert.equal(queueCalls, 0);
 
@@ -52,9 +52,8 @@ test('chat requests never enqueue uncertain results and preserve direct links', 
     assert.equal(saved.length, 1);
     assert.equal(saved[0].spotify_uri, track.uri);
     assert.equal(queueCalls, 1);
-    const structuredQueries = spotifyRequests.filter(url => url.includes('/v1/search')).map(url => new URL(url).searchParams.get('q'));
-    assert.ok(structuredQueries.includes('artist:"Linkin Park" track:"Numb"'));
-    assert.ok(structuredQueries.includes('artist:"Numb" track:"Linkin Park"'));
+    const searches = spotifyRequests.filter(url => url.includes('/v1/search')).map(url => new URL(url).searchParams.get('q'));
+    assert.ok(searches.includes('Linkin Park - Numb'));
 
     const searchesBeforeLink = spotifyRequests.filter(url => url.includes('/v1/search')).length;
     assert.match(await run(`https://open.spotify.com/track/${track.id}?si=example`), /Linkin Park - Numb.*добавлен в очередь/);

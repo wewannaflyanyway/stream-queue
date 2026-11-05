@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getStreamerAccessToken } from '@/lib/spotify';
 import { getServiceSupabase } from '@/lib/supabase';
+import { readStreamState } from '@/lib/stream/lifecycle';
+import { associateQueue, type QueueRequest } from '@/lib/stream/queue';
 
 export async function GET() {
   try {
@@ -36,18 +38,11 @@ export async function GET() {
       return NextResponse.json({ isPlaying: false, settings });
     }
 
-    const { data: currentDbData } = await supabase
-      .from('song_requests')
-      .select('sender_name')
-      .eq('spotify_uri', data.item.uri)
-      .in('status', ['approved', 'played'])
-      .limit(1);
-
     const current = {
       name: data.item.name,
       artist: (data.item.artists || []).map((artist) => artist.name).join(', '),
       cover: data.item.album?.images?.[0]?.url || null,
-      orderedBy: currentDbData?.[0]?.sender_name || null,
+      orderedBy: null as string | null,
     };
 
     const queueRes = await fetch('https://api.spotify.com/v1/me/player/queue', {
@@ -68,19 +63,35 @@ export async function GET() {
       if (queueData.queue && queueData.queue.length > 0) {
         const nextItem = queueData.queue[0];
 
-        const { data: nextDbData } = await supabase
-          .from('song_requests')
-          .select('sender_name')
-          .eq('spotify_uri', nextItem.uri)
-          .in('status', ['approved', 'pending'])
-          .limit(1);
-
         next = {
           name: nextItem.name,
           artist: (nextItem.artists || []).map((artist) => artist.name).join(', '),
-          orderedBy: nextDbData?.[0]?.sender_name || null,
+          orderedBy: null as string | null,
         };
       }
+
+      // Spotify does not identify the original request. Never reuse an old
+      // requester's name or guess when duplicate queue entries are present.
+      try {
+        const stream = await readStreamState();
+        const sessionId = stream?.online ? stream.session_id : null;
+        const offlineSince = !stream?.online ? stream?.manual_offline_since : null;
+        if (sessionId || offlineSince) {
+          const uris = [...new Set([data.item.uri, queueData.queue?.[0]?.uri].filter((uri): uri is string => Boolean(uri)))];
+          let query = supabase.from('song_requests')
+            .select('id,created_at,queued_at,stream_session_id,track_name,artist_name,sender_name,spotify_uri,status')
+            .eq('status', 'approved').in('spotify_uri', uris).limit(1000);
+          query = sessionId ? query.eq('stream_session_id', sessionId) : query.is('stream_session_id', null).gte('created_at', offlineSince!);
+          const { data: requests, error } = await query;
+          if (!error && requests) {
+            const playerItem = { uri: data.item.uri, name: data.item.name, artist: current.artist };
+            const queue = (queueData.queue ?? []).map(item => ({ uri: item.uri, name: item.name, artist: (item.artists || []).map(artist => artist.name).join(', ') }));
+            const associated = associateQueue(playerItem, queue, requests as QueueRequest[]);
+            current.orderedBy = associated.current?.request?.sender_name || null;
+            if (next) next.orderedBy = associated.queue[0]?.request?.sender_name || null;
+          }
+        }
+      } catch { /* Keep the widget working without displaying an unverified name. */ }
     }
 
     return NextResponse.json({

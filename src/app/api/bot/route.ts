@@ -56,9 +56,6 @@ export async function GET(req: NextRequest) {
         const data = await res.json() as { tracks?: { items?: BotSpotifyTrack[] } };
         return data.tracks?.items ?? [];
       });
-      if (result.kind === 'uncertain') {
-        return new NextResponse(`@${user}, не удалось уверенно определить трек. Укажи исполнителя и название или пришли ссылку Spotify.`, { status: 200 });
-      }
       if (result.kind === 'match') track = result.track;
     }
 

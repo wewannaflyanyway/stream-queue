@@ -78,7 +78,8 @@ export default function ViewerPage() {
   const [provider, setProvider] = useState<MusicProvider>('spotify');
   const [settings, setSettings] = useState<StreamSettings | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
-  const [liveStatus, setLiveStatus] = useState<ViewerLiveStatus>('unknown');
+  const [liveStatus, setLiveStatus] = useState<ViewerLiveStatus | null>(null);
+  const [settingsError, setSettingsError] = useState(false);
   const [query, setQuery] = useState('');
   const [search, setSearch] = useState<SearchState>(EMPTY_SEARCH);
   const [selectedTrack, setSelectedTrack] = useState<Track | null>(null);
@@ -121,19 +122,13 @@ export default function ViewerPage() {
   // 2. Загрузка данных из Supabase + Realtime подписка
   useEffect(() => {
     const fetchInitialData = async () => {
-      const { data: sData } = await supabase
-        .from('stream_settings')
-        .select('*')
-        .eq('id', 1)
-        .single();
-      if (sData) setSettings(sData);
-
-      const { count } = await supabase
-        .from('song_requests')
-        .select('id', { count: 'exact', head: true })
-        .eq('status', 'pending')
-        .eq('stream_pending_archived', false);
-      if (count !== null) setPendingCount(count);
+      void supabase.from('stream_settings').select('*').eq('id', 1).single().then(({ data }) => {
+        if (data) { setSettings(data); setSettingsError(false); }
+        else setSettingsError(true);
+      }, () => setSettingsError(true));
+      void supabase.from('song_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending').eq('stream_pending_archived', false).then(({ count }) => {
+        if (count !== null) setPendingCount(count);
+      }, () => {});
     };
 
     fetchInitialData();
@@ -144,7 +139,7 @@ export default function ViewerPage() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'stream_settings' },
         (payload) => {
-          if (payload.new) setSettings(payload.new as StreamSettings);
+          if (payload.new) { setSettings(payload.new as StreamSettings); setSettingsError(false); }
         }
       )
       .on(
@@ -257,7 +252,8 @@ export default function ViewerPage() {
 
   const maxQueueSize = settings?.max_queue_size || 15;
   const isQueueFull = pendingCount >= maxQueueSize;
-  const isAccepting = (settings?.is_accepting ?? false) && liveStatus !== 'unknown';
+  const isAccepting = (settings?.is_accepting ?? false) && liveStatus !== null && liveStatus !== 'unknown';
+  const isLoadingOrder = (!settings && !settingsError) || liveStatus === null;
   const validationError = getValidationError(selectedTrack);
 
   // 5. Отправка трека
@@ -328,7 +324,7 @@ export default function ViewerPage() {
         {/* Bento Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
           {/* Карточка 1: Статус стрима (На всю ширину сверху) */}
-          <div className="lg:col-span-12 rounded-3xl bg-[var(--viewer-panel)] backdrop-blur-xl border border-[var(--viewer-panel-border)] p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="lg:col-span-12 rounded-3xl bg-[var(--viewer-panel)] border border-[var(--viewer-panel-border)] p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 rounded-2xl bg-[var(--viewer-accent-medium)] border border-[var(--viewer-accent-border)] flex items-center justify-center text-[var(--viewer-accent)] shrink-0">
                 <ProviderIcon provider={provider} className="w-6 h-6" />
@@ -340,13 +336,15 @@ export default function ViewerPage() {
                   </h1>
                   <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold border ${liveStatus === 'online' ? 'bg-[var(--viewer-success-soft)] text-[var(--viewer-success)] border-[var(--viewer-success-border)]' : 'bg-[var(--viewer-neutral)] text-[var(--viewer-muted)] border-[var(--viewer-input-border)]'}`}>
                     <span className="w-2 h-2 rounded-full bg-current" />
-                    {liveStatus === 'online' ? 'Стрим онлайн' : liveStatus === 'offline' ? 'Стрим офлайн' : liveStatus === 'unmanaged' ? 'Автостатус не включён' : 'Статус стрима недоступен'}
+                    {liveStatus === null ? 'Проверяем стрим…' : liveStatus === 'online' ? 'Стрим онлайн' : liveStatus === 'offline' ? 'Стрим офлайн' : liveStatus === 'unmanaged' ? 'Автостатус не включён' : 'Статус стрима недоступен'}
                   </span>
                   {provider === 'youtube' ? (
                     <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-[var(--viewer-accent-medium)] text-[var(--viewer-accent)] border border-[var(--viewer-accent-border)]">
                       <span className="w-2 h-2 rounded-full bg-[var(--viewer-accent)]" />
                       YouTube скоро
                     </span>
+                  ) : isLoadingOrder ? (
+                    <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-[var(--viewer-neutral)] text-[var(--viewer-muted)] border border-[var(--viewer-input-border)]">Проверяем приём заказов…</span>
                   ) : isAccepting ? (
                     <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-[var(--viewer-accent-medium)] text-[var(--viewer-accent)] border border-[var(--viewer-accent-border)]">
                       <span className="w-2 h-2 rounded-full bg-[var(--viewer-accent)] animate-pulse" />
@@ -355,7 +353,7 @@ export default function ViewerPage() {
                   ) : (
                     <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-[var(--viewer-neutral)] text-[var(--viewer-muted)] border border-[var(--viewer-input-border)]">
                       <span className="w-2 h-2 rounded-full bg-[#A7A7A7]" />
-                      Прием музыки закрыт
+                      {settingsError || liveStatus === 'unknown' ? 'Не удалось проверить приём' : 'Прием музыки закрыт'}
                     </span>
                   )}
                 </div>
@@ -380,7 +378,7 @@ export default function ViewerPage() {
           </div>
 
           {/* Карточка 2: Живой поиск и заказ (Левая основная колонка) */}
-          <div className="lg:col-span-7 self-start rounded-3xl bg-[var(--viewer-panel)] backdrop-blur-xl border border-[var(--viewer-panel-border)] p-6 flex flex-col relative z-10">
+          <div className="lg:col-span-7 self-start rounded-3xl bg-[var(--viewer-panel)] border border-[var(--viewer-panel-border)] p-6 flex flex-col relative z-10">
             <div>
               <h2 id="music-order-heading" className="text-lg font-semibold mb-4 flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-[var(--viewer-accent)]" />
@@ -409,12 +407,17 @@ export default function ViewerPage() {
               <div key={provider} id="music-order-form" className="viewer-order-content relative z-10" role="region" aria-labelledby="music-order-heading">
 
               {/* Блокировки если закрыто или очередь полная */}
-                {provider === 'spotify' && !isAccepting ? (
+                {provider === 'spotify' && isLoadingOrder ? (
+                <div className="space-y-4" role="status" aria-label="Загружаем настройки заказов">
+                  <div className="h-12 rounded-2xl bg-[var(--viewer-surface)] border border-[var(--viewer-panel-border)]" />
+                  <div className="h-11 rounded-2xl bg-[var(--viewer-surface)] border border-[var(--viewer-panel-border)]" />
+                </div>
+                ) : provider === 'spotify' && !isAccepting ? (
                 <div className="rounded-2xl bg-[var(--viewer-surface)] border border-[var(--viewer-panel-border)] p-6 text-center my-4">
                   <AlertCircle className="w-8 h-8 text-[var(--viewer-muted)] mx-auto mb-2" />
-                  <p className="font-medium text-[var(--viewer-text)]">Прием заказов сейчас приостановлен</p>
+                  <p className="font-medium text-[var(--viewer-text)]">{settingsError || liveStatus === 'unknown' ? 'Не удалось проверить приём заказов' : 'Прием заказов сейчас приостановлен'}</p>
                   <p className="text-xs text-[var(--viewer-muted)] mt-1">
-                    Подожди, пока стример снова откроет очередь
+                    {settingsError || liveStatus === 'unknown' ? 'Проверь соединение и попробуй ещё раз' : 'Подожди, пока стример снова откроет очередь'}
                   </p>
                 </div>
                 ) : provider === 'spotify' && isQueueFull ? (
@@ -624,7 +627,7 @@ export default function ViewerPage() {
           {/* Правая колонка: Правила + Виджет очереди */}
           <div className="lg:col-span-5 flex flex-col gap-5">
             {/* Карточка 3: Правила стрима */}
-            <div className="rounded-3xl bg-[var(--viewer-panel)] backdrop-blur-xl border border-[var(--viewer-panel-border)] p-6">
+            <div className="rounded-3xl bg-[var(--viewer-panel)] border border-[var(--viewer-panel-border)] p-6">
               <h2 className="text-base font-semibold mb-3 flex items-center gap-2">
                 <ShieldAlert className="w-4 h-4 text-[var(--viewer-accent)]" />
                 Правила заказа музыки

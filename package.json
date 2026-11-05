@@ -9,7 +9,7 @@
     "lint": "eslint",
     "test:polls": "tsx --test tests/polls.test.ts",
     "test:bot-search": "node --experimental-test-module-mocks --import tsx --test tests/bot-track-search.test.ts tests/bot-route.test.ts",
-    "test:stream": "node --experimental-test-module-mocks --import tsx --test tests/stream-sessions.test.ts tests/stream-events.test.ts tests/stream-lifecycle.test.ts tests/stream-admin.test.ts tests/viewer-stream-panel.test.tsx"
+    "test:stream": "node --experimental-test-module-mocks --import tsx --test tests/stream-sessions.test.ts tests/stream-events.test.ts tests/stream-lifecycle.test.ts tests/stream-admin.test.ts tests/viewer-stream-panel.test.tsx tests/now-playing-route.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.118.0",
