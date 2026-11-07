@@ -3,7 +3,7 @@ import { createHash, createHmac } from 'node:crypto';
 import { getServiceSupabase } from '@/lib/supabase';
 import { PollError, twitchMissing } from './server';
 
-export const TWITCH_SCOPES = ['user:read:chat', 'user:bot', 'channel:bot'];
+export const TWITCH_SCOPES = ['user:read:chat', 'user:write:chat', 'user:bot', 'channel:bot'];
 export function twitchConfig() {
   if (twitchMissing().length) throw new PollError('Сначала добавьте настройки приложения Twitch на сервер. Инструкция: docs/POLLS_SETUP.md.', 503);
   const url = new URL(process.env.APP_URL!);
@@ -61,12 +61,12 @@ export async function connectTwitch(code: string) {
   // User tokens are deliberately not persisted. EventSub uses the app token and retained OAuth grants.
   const callback = `${config.origin}/api/twitch/eventsub`;
   const fingerprint = createHash('sha256').update(eventSecret()).digest('hex');
-  const { data: saved, error: savedError } = await getServiceSupabase().from('stream_poll_twitch').select('secret_fingerprint').eq('id',1).single();
+  const { data: saved, error: savedError } = await getServiceSupabase().from('stream_poll_twitch').select('secret_fingerprint,broadcaster_id,music_commands_enabled').eq('id',1).single();
   if (savedError) throw new PollError('Сначала примените миграцию голосований.', 503);
   const previous = await subscriptions();
   const existing = previous.find(s => s.condition.broadcaster_user_id === user.id && s.condition.user_id === user.id && s.transport.callback === callback && ['enabled','webhook_callback_verification_pending'].includes(s.status));
   if (existing && saved.secret_fingerprint === fingerprint) {
-    await updateConnection({ broadcaster_id: user.id, login: user.login, subscription_id: existing.id, status: existing.status, last_checked_at: new Date().toISOString(), last_event_at: null });
+    await updateConnection({ broadcaster_id: user.id, login: user.login, subscription_id: existing.id, status: existing.status, last_checked_at: new Date().toISOString(), last_event_at: null, chat_write_granted: true, music_commands_enabled: saved.broadcaster_id === user.id && saved.music_commands_enabled === true });
     return;
   }
   if (existing) {
@@ -74,7 +74,7 @@ export async function connectTwitch(code: string) {
     const removed = await helix(`eventsub/subscriptions?id=${encodeURIComponent(existing.id)}`, { method: 'DELETE' });
     if (!removed.ok && removed.status !== 404) throw new PollError('Не удалось обновить ключ подписки Twitch. Повторите подключение.', 502);
   }
-  await updateConnection({ broadcaster_id: user.id, login: user.login, subscription_id: null, secret_fingerprint: fingerprint, status: 'connecting', last_event_at: null });
+  await updateConnection({ broadcaster_id: user.id, login: user.login, subscription_id: null, secret_fingerprint: fingerprint, status: 'connecting', last_event_at: null, chat_write_granted: true, music_commands_enabled: saved.broadcaster_id === user.id && saved.music_commands_enabled === true });
   const created = await helix('eventsub/subscriptions', { method: 'POST', body: JSON.stringify({ type: 'channel.chat.message', version: '1', condition: { broadcaster_user_id: user.id, user_id: user.id }, transport: { method: 'webhook', callback, secret: eventSecret() } }) });
   if (!created.ok) { await updateConnection({ status: 'error' }); throw new PollError('Twitch не создал подписку на чат. Проверьте права и доступность HTTPS сайта.', 502); }
   const sub: Subscription = (await created.json()).data[0];

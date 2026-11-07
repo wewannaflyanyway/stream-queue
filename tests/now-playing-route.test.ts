@@ -6,6 +6,7 @@ test('widget uses current session requests and never guesses for duplicate track
   let state: { online: boolean; session_id: string | null; manual_offline_since: string | null } = { online: true, session_id: 'current', manual_offline_since: null };
   let queue: string[] = ['next'];
   let queueOk = true;
+  let playerStatus = 200;
   let failRequests = false;
   const rows = [
     { id: 'old', spotify_uri: 'current', status: 'approved', stream_session_id: 'old', sender_name: 'viewer2', created_at: '2026-11-01T10:00:00Z' },
@@ -14,7 +15,7 @@ test('widget uses current session requests and never guesses for duplicate track
     { id: 'next', spotify_uri: 'next', status: 'approved', stream_session_id: 'current', sender_name: 'viewer3', created_at: '2026-11-04T10:01:00Z' },
     { id: 'pending', spotify_uri: 'next', status: 'pending', stream_session_id: 'current', sender_name: 'viewer4', created_at: '2026-11-04T10:02:00Z' },
   ];
-  mock.module(new URL('../src/lib/spotify.ts', import.meta.url).href, { namedExports: { getStreamerAccessToken: async () => 'test-token' } });
+  mock.module(new URL('../src/lib/spotify.ts', import.meta.url).href, { namedExports: { getStreamerAccessToken: async () => 'test-token', fetchWithTimeout: (...args: Parameters<typeof fetch>) => fetch(...args) } });
   mock.module(new URL('../src/lib/stream/lifecycle.ts', import.meta.url).href, { namedExports: { readStreamState: async () => state } });
   mock.module(new URL('../src/lib/supabase.ts', import.meta.url).href, { namedExports: {
     getServiceSupabase: () => ({ from: (table: string) => {
@@ -34,31 +35,42 @@ test('widget uses current session requests and never guesses for duplicate track
   } });
   globalThis.fetch = async (input) => {
     const url = String(input);
-    if (url.includes('currently-playing')) return Response.json({ is_playing: true, item: { uri: 'current', name: 'Song', artists: [{ name: 'Artist' }] } });
+    if (url.includes('currently-playing')) {
+      if (playerStatus !== 200) return new Response(null, { status: playerStatus });
+      return Response.json({ is_playing: true, item: { uri: 'current', name: 'Song', artists: [{ name: 'Artist' }] } });
+    }
     if (!queueOk) return new Response(null, { status: 503 });
     return Response.json({ queue: queue.map(uri => ({ uri, name: uri, artists: [{ name: 'Artist' }] })) });
   };
   try {
     const { GET } = await import('../src/app/api/spotify/now-playing/route');
-    let result = await (await GET()).json();
+    const get = () => GET(new Request('http://localhost/api/spotify/now-playing'));
+    let result = await (await get()).json();
     assert.equal(result.current.orderedBy, 'viewer1');
     assert.equal(result.next.orderedBy, 'viewer3');
     queue = ['current', 'next'];
-    result = await (await GET()).json();
+    result = await (await get()).json();
     assert.equal(result.current.orderedBy, null);
     assert.equal(result.next.orderedBy, null);
     queue = ['next'];
     queueOk = false;
-    result = await (await GET()).json();
+    result = await (await get()).json();
     assert.equal(result.current.orderedBy, null);
     queueOk = true;
     failRequests = true;
-    result = await (await GET()).json();
+    result = await (await get()).json();
     assert.equal(result.current.orderedBy, null);
     failRequests = false;
     state = { online: false, session_id: 'old', manual_offline_since: null };
-    result = await (await GET()).json();
+    result = await (await get()).json();
     assert.equal(result.current.orderedBy, null);
+    playerStatus = 204;
+    result = await (await get()).json();
+    assert.equal(result.isPlaying, false);
+    assert.equal(result.error, undefined);
+    playerStatus = 429;
+    result = await (await get()).json();
+    assert.ok(result.error);
   } finally {
     globalThis.fetch = originalFetch;
     mock.restoreAll();

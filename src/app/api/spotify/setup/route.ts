@@ -5,6 +5,10 @@ const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET!;
 const REDIRECT_URI = process.env.SPOTIFY_REDIRECT_URI || 'http://127.0.0.1:3000/api/spotify/setup';
 
 export async function GET(req: NextRequest) {
+  // OAuth setup displays a refresh token and must only run on a local server.
+  if (process.env.NODE_ENV === 'production') {
+    return new NextResponse('Not found', { status: 404 });
+  }
   const code = req.nextUrl.searchParams.get('code');
 
   // Если кода еще нет — перенаправляем в Spotify для входа
@@ -49,6 +53,6 @@ export async function GET(req: NextRequest) {
         <p style="color:#a7a7a7;">После сохранения .env.local перезапусти сервер в терминале (Ctrl+C и снова npm run dev).</p>
       </body>
     </html>`,
-    { headers: { 'Content-Type': 'text/html; charset=utf-8' } }
+    { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } }
   );
 }

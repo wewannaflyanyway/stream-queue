@@ -11,7 +11,6 @@ type SpotifyTrack = {
   uri: string;
   name: string;
   artist: string;
-  albumCover: string;
   durationMs: number;
   isExplicit: boolean;
 };
@@ -20,6 +19,17 @@ const globalForSpotify = globalThis as unknown as {
   searchTokenCache: SpotifyTokenCache | null;
   streamerTokenCache: SpotifyTokenCache | null;
 };
+
+export async function getSpotifyTrack(uri: string) {
+  const match = /^spotify:track:([a-z0-9]{22})$/i.exec(uri);
+  if (!match) throw new Error('Некорректная ссылка на трек Spotify.');
+  const token = await getStreamerAccessToken();
+  const response = await fetchWithTimeout(`https://api.spotify.com/v1/tracks/${match[1]}`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
+  if (!response.ok) throw new Error(response.status === 404 ? 'Трек не найден в Spotify.' : 'Не удалось проверить трек в Spotify.');
+  const item = await response.json() as { uri: string; name: string; artists: { name: string }[]; duration_ms: number; explicit: boolean };
+  if (!Array.isArray(item.artists)) throw new Error('Не удалось проверить данные трека в Spotify.');
+  return { uri: item.uri, name: item.name, artist: item.artists.map(a => a.name).join(', '), durationMs: item.duration_ms, isExplicit: item.explicit === true };
+}
 
 export async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 5000) {
   const controller = new AbortController();
@@ -136,9 +146,6 @@ export async function searchSpotifyTracks(query: string): Promise<SpotifyTrack[]
         explicit: boolean;
         duration_ms: number;
         artists: Array<{ name: string }>;
-        album: {
-          images?: Array<{ url?: string }>;
-        };
       }>;
     };
   };
@@ -148,7 +155,6 @@ export async function searchSpotifyTracks(query: string): Promise<SpotifyTrack[]
     uri: track.uri,
     name: track.name,
     artist: track.artists.map((artist) => artist.name).join(', '),
-    albumCover: track.album.images?.[1]?.url || track.album.images?.[0]?.url || '',
     durationMs: track.duration_ms,
     isExplicit: track.explicit,
   }));

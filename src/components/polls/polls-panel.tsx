@@ -11,7 +11,7 @@ const subscribeOrigin = () => () => {};
 const getOrigin = () => window.location.origin;
 const serverOrigin = () => '';
 
-export function PollsPanel({ pin }: { pin: string }) {
+export function PollsPanel() {
   const [data, setData] = useState<PollAdminState | null>(null);
   const [draft, setDraft] = useState<PollDraft>(EMPTY_DRAFT);
   const [style, setStyle] = useState<PollStyle>(DEFAULT_STYLE);
@@ -28,11 +28,11 @@ export function PollsPanel({ pin }: { pin: string }) {
   const generation = useRef(0);
   const mounted = useRef(false);
   const api = useCallback(async (action: string, payload?: unknown) => {
-    const res = await fetch('/api/polls/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin, action, payload }), signal: AbortSignal.timeout(15_000), cache: 'no-store' });
+    const res = await fetch('/api/polls/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, payload }), signal: AbortSignal.timeout(15_000), cache: 'no-store' });
     const result = await res.json();
     if (!res.ok) throw new Error(result.error ?? 'Не удалось выполнить действие.');
     return result;
-  }, [pin]);
+  }, []);
   useEffect(() => {
     mounted.current = true;
     let stopped = false;

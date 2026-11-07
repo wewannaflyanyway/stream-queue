@@ -7,6 +7,8 @@ export interface QueueRequest {
   track_name: string;
   artist_name: string;
   sender_name: string;
+  sender_twitch_id?: string | null;
+  source?: string;
   spotify_uri: string;
   status: string;
 }
@@ -26,8 +28,12 @@ export function associateQueue(current: PlayerItem | null, queue: PlayerItem[], 
 }
 
 export type Position = { kind: 'pending' } | { kind: 'playing' } | { kind: 'unknown' } | { kind: 'none' } | { kind: 'queued'; ahead: number; track: string };
-export function positionForUser(user: string, requests: QueueRequest[], current: QueueItem | null, queue: QueueItem[], playbackAvailable: boolean): Position {
-  const matches = requests.filter(request => request.sender_name.toLocaleLowerCase('ru') === user.toLocaleLowerCase('ru') && ['approved', 'pending'].includes(request.status));
+export function positionForUser(user: string, requests: QueueRequest[], current: QueueItem | null, queue: QueueItem[], playbackAvailable: boolean, twitchUserId: string | null = null): Position {
+  const matches = requests.filter(request => {
+    const nameMatches = request.sender_name.toLocaleLowerCase('ru') === user.toLocaleLowerCase('ru');
+    const identityMatches = twitchUserId ? request.sender_twitch_id === twitchUserId || (!request.sender_twitch_id && request.source === 'web' && nameMatches) : nameMatches;
+    return identityMatches && ['approved', 'pending'].includes(request.status);
+  });
   const latest = matches.sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
   if (!latest) return { kind: 'none' };
   if (latest.status === 'pending') return { kind: 'pending' };

@@ -4,7 +4,6 @@ export interface BotSpotifyTrack {
   uri: string;
   name: string;
   artists: { name: string }[];
-  album?: { images?: { url?: string }[] };
   duration_ms: number;
   explicit: boolean;
 }

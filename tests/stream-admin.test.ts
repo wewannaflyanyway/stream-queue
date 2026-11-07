@@ -18,13 +18,18 @@ test('saving unrelated settings cannot override manual pause, but explicit offli
     }),
   } });
   mock.module(new URL('../src/lib/spotify.ts',import.meta.url).href, { namedExports: { addTrackToSpotifyQueue: async () => true, skipSpotifyTrack: async () => true } });
+  mock.module(new URL('../src/lib/polls/twitch.ts',import.meta.url).href, { namedExports: { checkTwitch: async () => {} } });
+  mock.module(new URL('../src/lib/admin-auth.ts',import.meta.url).href, { namedExports: { verifyAdmin: async (_request: Request, pin: string) => pin === 'local-test-pin', hasAdminSession: (request: Request) => request.headers.get('cookie') === 'session=valid', createAdminSession: () => 'valid', adminSessionCookie: { name: 'session', httpOnly: true, path: '/' } } });
   mock.module(new URL('../src/lib/stream/lifecycle.ts',import.meta.url).href, { namedExports: {
     readStreamState: async () => ({automation_enabled:true,online:false}),
     reconcileStreamState: async () => null, enableStreamAutomation: async () => {},
   } });
   try {
     const { POST } = await import('../src/app/api/admin/route');
-    const send = (action:string,payload:object,pin='local-test-pin') => POST(new NextRequest('http://localhost/api/admin', { method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({pin,action,payload}) }));
+    const send = (action:string,payload:object,pin='local-test-pin') => POST(new NextRequest('http://localhost/api/admin', { method:'POST',headers:{'content-type':'application/json',cookie:pin === 'local-test-pin' ? 'session=valid' : ''},body:JSON.stringify({pin,action,payload}) }));
+    const login = await send('verify_pin', {}, 'local-test-pin');
+    assert.equal(login.status, 200);
+    assert.match(login.headers.get('set-cookie') || '', /HttpOnly/i);
     assert.equal((await send('update_settings',{is_accepting:true,max_queue_size:20})).status,200);
     assert.deepEqual(updates,[{max_queue_size:20}]);
     assert.deepEqual(manual,[]);

@@ -6,7 +6,6 @@ import { Music, SkipForward, AlertCircle, User } from 'lucide-react';
 interface TrackInfo {
   name: string;
   artist: string;
-  cover?: string | null;
   orderedBy?: string | null;
 }
 
@@ -67,9 +66,8 @@ export default function WidgetPage() {
       const abortTimer = setTimeout(() => controller.abort(), 6000);
 
       try {
-        const res = await fetch(`/api/spotify/now-playing?t=${Date.now()}`, {
+        const res = await fetch('/api/spotify/now-playing', {
           signal: controller.signal,
-          cache: 'no-store',
         });
         clearTimeout(abortTimer);
 
@@ -112,11 +110,7 @@ export default function WidgetPage() {
   const textColor = s?.widget_text_color || '#ffffff';
   const accentColor = s?.widget_accent_color || '#1DB954';
 
-  // ПРИОРИТЕТ: Если пользователь указал свою картинку в настройках — используем её всегда. Иначе берем обложку Spotify.
-  const rawImageUrl = s?.widget_custom_image ? s.widget_custom_image : (data.isPlaying && data.current?.cover ? data.current.cover : null);
-  const imageUrl = rawImageUrl && (rawImageUrl.includes('scdn.co') || rawImageUrl.includes('spotify'))
-    ? `/api/proxy-image?url=${encodeURIComponent(rawImageUrl)}`
-    : rawImageUrl;
+  const imageUrl = s?.widget_custom_image || null;
 
   return (
     <>
@@ -166,7 +160,7 @@ export default function WidgetPage() {
             <div className="flex gap-6">
               <div className="w-24 h-24 rounded-2xl shrink-0 bg-black/40 overflow-hidden border border-white/5 flex items-center justify-center relative">
                 {imageUrl ? (
-                  <img key={imageUrl} src={imageUrl} alt="Cover" className="w-full h-full object-cover shadow-inner" />
+                  <img key={imageUrl} src={imageUrl} alt="Логотип" className="w-full h-full object-cover shadow-inner" />
                 ) : (
                   <Music className="w-12 h-12" style={{ color: accentColor }} />
                 )}

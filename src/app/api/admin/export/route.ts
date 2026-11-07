@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getStreamerAccessToken } from '@/lib/spotify';
 import { getServiceSupabase } from '@/lib/supabase';
 import { readStreamState } from '@/lib/stream/lifecycle';
+import { hasAdminSession } from '@/lib/admin-auth';
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    if (!process.env.ADMIN_PIN || body.pin !== process.env.ADMIN_PIN) return NextResponse.json({ error: 'Неверный PIN-код доступа' }, { status: 401 });
+    if (!hasAdminSession(request)) return NextResponse.json({ error: 'Сессия админки истекла. Войдите снова.' }, { status: 401 });
     if (body.sessionId !== null && body.sessionId !== undefined && (typeof body.sessionId !== 'string' || !/^[0-9a-f-]{36}$/i.test(body.sessionId))) return NextResponse.json({ error: 'Некорректный стрим.' }, { status: 400 });
     const token = await getStreamerAccessToken();
     const supabase = getServiceSupabase();
@@ -68,15 +69,16 @@ export async function POST(request: NextRequest) {
     // 4. Заливаем треки пачками по 100 штук
     for (let i = 0; i < uris.length; i += 100) {
       const chunk = uris.slice(i, i + 100);
-      await fetch(`https://api.spotify.com/v1/playlists/${playlistData.id}/tracks`, {
+      const addResponse = await fetch(`https://api.spotify.com/v1/playlists/${playlistData.id}/tracks`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ uris: chunk })
       });
+      if (!addResponse.ok) return NextResponse.json({ error: `Плейлист создан, но не удалось добавить все треки Spotify (ошибка ${addResponse.status}). Проверьте плейлист перед повтором.`, url: playlistData.external_urls?.spotify }, { status: 502 });
     }
 
     return NextResponse.json({ success: true, url: playlistData.external_urls?.spotify });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Export Error:', error);
     return NextResponse.json({ error: 'Внутренняя ошибка сервера' }, { status: 500 });
   }

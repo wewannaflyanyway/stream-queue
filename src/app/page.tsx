@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useSyncExternalStore } from 'react';
-import { supabase } from '@/lib/supabase';
 import ProviderIcon from '@/components/provider-icon';
 import ViewerStreamPanel, { type ViewerLiveStatus } from '@/components/viewer-stream-panel';
 import { MUSIC_PROVIDER_NAMES, type MusicProvider } from '@/lib/music-provider';
@@ -24,7 +23,6 @@ interface Track {
   uri: string;
   name: string;
   artist: string;
-  albumCover: string;
   durationMs: number;
   isExplicit: boolean;
 }
@@ -119,46 +117,24 @@ export default function ViewerPage() {
     };
   }, []);
 
-  // 2. Загрузка данных из Supabase + Realtime подписка
+  // Only public settings and counts are exposed to viewers.
   useEffect(() => {
-    const fetchInitialData = async () => {
-      void supabase.from('stream_settings').select('*').eq('id', 1).single().then(({ data }) => {
-        if (data) { setSettings(data); setSettingsError(false); }
-        else setSettingsError(true);
-      }, () => setSettingsError(true));
-      void supabase.from('song_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending').eq('stream_pending_archived', false).then(({ count }) => {
-        if (count !== null) setPendingCount(count);
-      }, () => {});
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let controller: AbortController;
+    const refresh = async () => {
+      controller = new AbortController();
+      const deadline = setTimeout(() => controller.abort(), 8000);
+      try {
+        const response = await fetch('/api/viewer/config', { signal: controller.signal });
+        if (!response.ok) throw new Error('config unavailable');
+        const data = await response.json() as { settings: StreamSettings; pendingCount: number };
+        if (!stopped) { setSettings(data.settings); setPendingCount(data.pendingCount); setSettingsError(false); }
+      } catch { if (!stopped) setSettingsError(true); }
+      finally { clearTimeout(deadline); if (!stopped) timer = setTimeout(refresh, 10000); }
     };
-
-    fetchInitialData();
-
-    const channel = supabase
-      .channel('public-viewer-sync')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'stream_settings' },
-        (payload) => {
-          if (payload.new) { setSettings(payload.new as StreamSettings); setSettingsError(false); }
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'song_requests' },
-        async () => {
-          const { count } = await supabase
-            .from('song_requests')
-            .select('id', { count: 'exact', head: true })
-            .eq('status', 'pending')
-            .eq('stream_pending_archived', false);
-          if (count !== null) setPendingCount(count);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    void refresh();
+    return () => { stopped = true; clearTimeout(timer); controller?.abort(); };
   }, []);
 
   // 3. Дебаунс-поиск по Spotify (450 мс) с отменой устаревших запросов и таймаутом
@@ -275,14 +251,8 @@ export default function ViewerPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          track_name: selectedTrack.name,
-          artist_name: selectedTrack.artist,
-          album_cover_url: selectedTrack.albumCover,
           spotify_uri: selectedTrack.uri,
-          duration_ms: selectedTrack.durationMs,
-          is_explicit: selectedTrack.isExplicit,
           sender_name: cleanName || 'Аноним',
-          source: 'web',
         }),
       });
 
@@ -304,11 +274,11 @@ export default function ViewerPage() {
         setSelectedTrack(null);
         setQuery('');
         setFeedback({
-          type: 'success',
+          type: data.warning ? 'error' : 'success',
           text:
-            data.status === 'approved'
+            data.warning || (data.status === 'approved'
               ? 'Трек мгновенно добавлен в очередь Spotify стримера!'
-              : 'Заявка отправлена! Ожидай подтверждения стримером.',
+              : 'Заявка отправлена! Ожидай подтверждения стримером.'),
         });
       }
     } catch {

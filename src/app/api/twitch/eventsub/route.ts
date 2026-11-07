@@ -2,6 +2,8 @@ import { getServiceSupabase } from '@/lib/supabase';
 import { eventSecret } from '@/lib/polls/twitch';
 import { verifyTwitchSignature } from '@/lib/polls/signature';
 import { pollResponseError, pollRpc } from '@/lib/polls/server';
+import { handleTwitchMusicCommand } from '@/lib/chat/twitch-commands';
+import { after } from 'next/server';
 
 export async function POST(request: Request) {
   try {
@@ -32,6 +34,13 @@ export async function POST(request: Request) {
       const event = body.event;
       if (event?.broadcaster_user_id !== connection.broadcaster_id || typeof event.message?.text !== 'string' || typeof event.chatter_user_id !== 'string' || typeof event.message_id !== 'string') return new Response(null, { status: 400 });
       await pollRpc('stream_poll_vote', { p_subscription: sub.id, p_broadcaster: event.broadcaster_user_id, p_user: event.chatter_user_id, p_message: event.message_id, p_text: event.message.text, p_time: request.headers.get('twitch-eventsub-message-timestamp') });
+      if (connection.music_commands_enabled && typeof event.chatter_user_login === 'string') {
+        // A Spotify lookup may outlast Twitch's webhook acknowledgement deadline.
+        after(async () => {
+          try { await handleTwitchMusicCommand({ broadcasterId: event.broadcaster_user_id, subscriptionId: sub.id, userId: event.chatter_user_id, login: event.chatter_user_login, messageId: event.message_id, text: event.message.text }); }
+          catch (error) { console.error('Twitch music command error:', error instanceof Error ? error.message : 'unknown'); }
+        });
+      }
       return new Response(null, { status: 204 });
     }
     return new Response(null, { status: 400 });

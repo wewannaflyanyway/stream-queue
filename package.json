@@ -8,8 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test:polls": "tsx --test tests/polls.test.ts",
-    "test:bot-search": "node --experimental-test-module-mocks --import tsx --test tests/bot-track-search.test.ts tests/bot-route.test.ts",
-    "test:stream": "node --experimental-test-module-mocks --import tsx --test tests/stream-sessions.test.ts tests/stream-events.test.ts tests/stream-lifecycle.test.ts tests/stream-admin.test.ts tests/viewer-stream-panel.test.tsx tests/now-playing-route.test.ts"
+    "test:bot-search": "node --experimental-test-module-mocks --import tsx --test tests/bot-track-search.test.ts tests/bot-route.test.ts tests/request-policy.test.ts tests/requests-route.test.ts",
+    "test:stream": "node --experimental-test-module-mocks --import tsx --test tests/stream-sessions.test.ts tests/stream-events.test.ts tests/stream-lifecycle.test.ts tests/stream-admin.test.ts tests/viewer-stream-panel.test.tsx tests/now-playing-route.test.ts tests/private-music-tables.test.ts tests/twitch-music-commands.test.ts tests/twitch-chat-migration.test.ts tests/chat-webhook.test.ts tests/admin-rate-limit.test.ts tests/admin-session.test.ts tests/enqueue-claims.test.ts tests/enqueue-request.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.118.0",

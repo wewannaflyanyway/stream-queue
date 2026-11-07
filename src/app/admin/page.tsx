@@ -1,7 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
-import { supabase } from '@/lib/supabase';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { PollsPanel } from '@/components/polls/polls-panel';
 import {
   Check,
@@ -36,10 +35,26 @@ function timeAgo(dateStr: string) {
   return `${hrs} ч назад`;
 }
 
+interface AdminSettings {
+  is_accepting: boolean; auto_approve: boolean; sound_alerts: boolean; cooldown_user_sec: number;
+  max_duration_sec: number; max_queue_size: number; prevent_duplicates: boolean; duplicate_cooldown_min: number;
+  explicit_mode: string; banned_words: string; banned_artists: string; rules_text: string;
+  widget_bg_color: string; widget_text_color: string; widget_accent_color: string; widget_opacity: number;
+  widget_custom_image: string; widget_show_eq: boolean;
+}
+interface AdminRequest {
+  id: string; created_at: string; track_name: string; artist_name: string; spotify_uri: string;
+  duration_ms: number; is_explicit: boolean; sender_name: string; source: string; status: string;
+  stream_session_id: string | null; stream_history_hidden: boolean; stream_pending_archived: boolean;
+  enqueue_claim?: { state: string; claimed_at: string; reviewable: boolean } | null;
+}
+function errorText(error: unknown) { return error instanceof Error ? error.message : 'Не удалось выполнить действие.'; }
+
 // Мягкий звуковой сигнал (Web Audio API синусоида 800 Гц)
 function playNotificationChime() {
   try {
-    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    const AudioCtx = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return;
     const ctx = new AudioCtx();
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -61,9 +76,9 @@ export default function AdminPage() {
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [authError, setAuthError] = useState('');
 
-  const [settings, setSettings] = useState<any>(null);
-  const [requests, setRequests] = useState<any[]>([]);
-  const [streamState, setStreamState] = useState<{ online: boolean; automationEnabled: boolean; sessionId: string | null; connectionHealthy: boolean; verified: boolean } | null>(null);
+  const [settings, setSettings] = useState<AdminSettings | null>(null);
+  const [requests, setRequests] = useState<AdminRequest[]>([]);
+  const [streamState, setStreamState] = useState<{ online: boolean; automationEnabled: boolean; sessionId: string | null; connectionHealthy: boolean; verified: boolean; musicCommandsEnabled: boolean; chatWriteGranted: boolean } | null>(null);
   const [streamBusy, setStreamBusy] = useState(false);
   const [streamSessions, setStreamSessions] = useState<{ id: string; started_at: string; ended_at: string | null }[]>([]);
   const [historySession, setHistorySession] = useState('current');
@@ -73,23 +88,14 @@ export default function AdminPage() {
   const [isExporting, setIsExporting] = useState(false);
 
   const soundEnabledRef = useRef(true);
+  const knownPendingRef = useRef<Set<string> | null>(null);
 
   const showToast = (text: string, type: 'ok' | 'err' = 'ok') => {
     setToast({ text, type });
     setTimeout(() => setToast(null), 4000);
   };
 
-  // Авто-вход если PIN уже сохранен в сессии
-  useEffect(() => {
-    const savedPin = sessionStorage.getItem('admin_pin');
-    if (savedPin) {
-      setPin(savedPin);
-      verifyPinCode(savedPin);
-    }
-  }, []);
-
-  const verifyPinCode = async (codeToTest: string) => {
-    setAuthError('');
+  const verifyPinCode = useCallback(async (codeToTest: string) => {
     try {
       const res = await fetch('/api/admin', {
         method: 'POST',
@@ -97,82 +103,50 @@ export default function AdminPage() {
         body: JSON.stringify({ pin: codeToTest, action: 'verify_pin' }),
       });
       if (res.ok) {
-        sessionStorage.setItem('admin_pin', codeToTest);
+        setPin('');
         setIsAuthorized(true);
         if (new URLSearchParams(window.location.search).has('polls')) setActiveTab('polls');
       } else {
-        setAuthError('Неверный PIN-код');
-        sessionStorage.removeItem('admin_pin');
+        const data = await res.json().catch(() => ({}));
+        setAuthError(data.error || 'Неверный PIN-код');
       }
     } catch {
       setAuthError('Ошибка соединения с сервером');
     }
-  };
+  }, []);
 
-  // Загрузка данных и Realtime подписка после входа
+  // Restore the HttpOnly admin session; remove PINs saved by older versions.
+  useEffect(() => {
+    sessionStorage.removeItem('admin_pin');
+    void fetch('/api/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'verify_session' }) })
+      .then(response => { if (response.ok) { setIsAuthorized(true); if (new URLSearchParams(window.location.search).has('polls')) setActiveTab('polls'); } })
+      .catch(() => {});
+  }, []);
+
+  // Admin data is loaded through the authenticated server endpoint.
   useEffect(() => {
     if (!isAuthorized) return;
-
-    const loadAll = async () => {
-      const { data: sData } = await supabase
-        .from('stream_settings')
-        .select('*')
-        .eq('id', 1)
-        .single();
-      if (sData) {
-        setSettings(sData);
-        soundEnabledRef.current = sData.sound_alerts;
-      }
-
-      const allRequests = [];
-      for (let offset = 0; ; offset += 1000) {
-        const { data: rData, error } = await supabase.from('song_requests').select('*').order('created_at', { ascending: false }).order('id', { ascending: false }).range(offset, offset + 999);
-        if (error || !rData) break;
-        allRequests.push(...rData);
-        if (rData.length < 1000) break;
-      }
-      setRequests(allRequests);
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = async () => {
+      try {
+        const response = await fetch('/api/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'read_data', payload: { sessionId: historySession === 'current' ? null : historySession, includeHistory: activeTab === 'history' } }), signal: AbortSignal.timeout(8000) });
+        if (response.status === 401) { if (!stopped) { setIsAuthorized(false); setAuthError('Сессия истекла. Войди снова.'); } return; }
+        if (!response.ok) throw new Error('Не удалось загрузить заявки.');
+        const data = await response.json();
+        if (stopped) return;
+        const pending = new Set<string>(data.requests.filter((item: { status: string; stream_pending_archived: boolean }) => item.status === 'pending' && !item.stream_pending_archived).map((item: { id: string }) => item.id));
+        if (knownPendingRef.current && [...pending].some(id => !knownPendingRef.current!.has(id)) && soundEnabledRef.current) playNotificationChime();
+        knownPendingRef.current = pending;
+        setRequests(data.requests);
+        setSettings(previous => activeTab === 'settings' || activeTab === 'widget' ? previous || data.settings : data.settings);
+        if (activeTab !== 'settings' && activeTab !== 'widget') soundEnabledRef.current = data.settings.sound_alerts;
+      } catch { /* Keep the last successful data until the next retry. */ }
+      finally { if (!stopped) timer = setTimeout(refresh, activeTab === 'history' ? 15000 : 5000); }
     };
-
-    loadAll();
-
-    const channel = supabase
-      .channel('admin-realtime-queue')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'song_requests' },
-        (payload) => {
-          const newReq = payload.new as any;
-          setRequests((prev) => [newReq, ...prev]);
-          if (soundEnabledRef.current && newReq.status === 'pending') {
-            playNotificationChime();
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'song_requests' },
-        (payload) => {
-          const updated = payload.new as any;
-          setRequests((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'stream_settings' },
-        (payload) => {
-          if (payload.new) {
-            setSettings(payload.new);
-            soundEnabledRef.current = (payload.new as any).sound_alerts;
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [isAuthorized]);
+    void refresh();
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [isAuthorized, historySession, activeTab, streamState?.sessionId]);
 
   useEffect(() => {
     if (!isAuthorized) return;
@@ -180,7 +154,7 @@ export default function AdminPage() {
     let timer: ReturnType<typeof setTimeout>;
     async function refresh() {
       try {
-        const response = await fetch('/api/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin, action: 'stream_status' }), signal: AbortSignal.timeout(8000) });
+        const response = await fetch('/api/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'stream_status' }), signal: AbortSignal.timeout(8000) });
         if (response.ok) {
           const data = await response.json();
           if (!stopped) setStreamState(data.stream);
@@ -192,36 +166,37 @@ export default function AdminPage() {
     }
     void refresh();
     return () => { stopped = true; clearTimeout(timer); };
-  }, [isAuthorized, pin]);
+  }, [isAuthorized]);
 
   useEffect(() => {
     if (!isAuthorized || activeTab !== 'history' || !streamState?.automationEnabled) return;
     let cancelled = false;
-    void fetch('/api/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin, action: 'stream_sessions' }), signal: AbortSignal.timeout(8000) })
+    void fetch('/api/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'stream_sessions' }), signal: AbortSignal.timeout(8000) })
       .then(response => response.ok ? response.json() : null)
       .then(data => { if (!cancelled && data) setStreamSessions(data.sessions); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [isAuthorized, activeTab, streamState?.automationEnabled, streamState?.sessionId, pin]);
+  }, [isAuthorized, activeTab, streamState?.automationEnabled, streamState?.sessionId]);
 
   // Универсальный вызов API админки
-  const callAdminApi = async (action: string, payload: any = {}, customPin?: string) => {
+  const callAdminApi = async (action: string, payload: unknown = {}) => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), action === 'stream_enable' ? 60000 : 8000);
     try {
       const res = await fetch('/api/admin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin: customPin ?? pin, action, payload }),
+        body: JSON.stringify({ action, payload }),
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
       const data = await res.json();
+      if (res.status === 401) { setIsAuthorized(false); setAuthError('Сессия истекла. Войди снова.'); }
       if (!res.ok) throw new Error(data.error || 'Ошибка запроса');
       return data;
-    } catch (err: any) {
+    } catch (err: unknown) {
       clearTimeout(timeoutId);
-      if (err.name === 'AbortError') {
+      if (err instanceof Error && err.name === 'AbortError') {
         throw new Error('Сервер долго не отвечает (таймаут 8 сек). Попробуй ещё раз.');
       }
       throw err;
@@ -229,22 +204,23 @@ export default function AdminPage() {
   };
 
   // Быстрые тумблеры в шапке
-  const toggleQuickSetting = async (key: string, currentVal: boolean) => {
+  const toggleQuickSetting = async (key: 'is_accepting' | 'sound_alerts' | 'auto_approve', current: boolean | undefined) => {
+    const currentVal = Boolean(current);
     const nextVal = !currentVal;
-    setSettings((prev: any) => ({ ...prev, [key]: nextVal }));
+    setSettings(prev => prev ? { ...prev, [key]: nextVal } : prev);
     if (key === 'sound_alerts') soundEnabledRef.current = nextVal;
     try {
       const result = await callAdminApi(key === 'is_accepting' ? 'set_accepting' : 'update_settings', { [key]: nextVal });
-      if (key === 'is_accepting') setSettings((prev: any) => ({ ...prev, is_accepting: result.is_accepting }));
-    } catch (e: any) {
-      setSettings((prev: any) => ({ ...prev, [key]: currentVal }));
+      if (key === 'is_accepting') setSettings(prev => prev ? { ...prev, is_accepting: result.is_accepting } : prev);
+    } catch (e: unknown) {
+      setSettings(prev => prev ? { ...prev, [key]: currentVal } : prev);
       if (key === 'sound_alerts') soundEnabledRef.current = currentVal;
-      showToast(e.message, 'err');
+      showToast(errorText(e), 'err');
     }
   };
 
   // Одобрить трек (с мгновенным скрытием из очереди)
-  const handleApprove = async (reqItem: any) => {
+  const handleApprove = async (reqItem: AdminRequest) => {
     setLoadingId(reqItem.id);
     const previousRequests = [...requests];
     
@@ -256,10 +232,10 @@ export default function AdminPage() {
     try {
       await callAdminApi('approve', { id: reqItem.id, spotify_uri: reqItem.spotify_uri });
       showToast(`Добавлено в Spotify: ${reqItem.track_name}`);
-    } catch (e: any) {
+    } catch (e: unknown) {
       // Если произошла ошибка — возвращаем карточку обратно в очередь
       setRequests(previousRequests);
-      showToast(e.message, 'err');
+      showToast(errorText(e), 'err');
     } finally {
       setLoadingId(null);
     }
@@ -277,12 +253,24 @@ export default function AdminPage() {
     try {
       await callAdminApi('reject', { id });
       showToast('Заявка отклонена');
-    } catch (e: any) {
+    } catch (e: unknown) {
       setRequests(previousRequests);
-      showToast(e.message, 'err');
+      showToast(errorText(e), 'err');
     } finally {
       setLoadingId(null);
     }
+  };
+
+  const handleResolveEnqueue = async (id: string, outcome: 'queued' | 'retry') => {
+    const message = outcome === 'queued' ? 'Ты проверил очередь Spotify и этот трек уже в ней?' : 'Ты проверил очередь Spotify и этого трека в ней нет? После этого его можно будет отправить повторно.';
+    if (!confirm(message)) return;
+    setLoadingId(id);
+    try {
+      await callAdminApi('resolve_enqueue', { id, outcome });
+      setRequests(prev => prev.map(item => item.id === id ? { ...item, enqueue_claim: null, status: outcome === 'queued' ? 'approved' : item.status } : item));
+      showToast(outcome === 'queued' ? 'Заявка отмечена как добавленная' : 'Заявку можно одобрить повторно');
+    } catch (error) { showToast(error instanceof Error ? error.message : 'Не удалось обновить заявку.', 'err'); }
+    finally { setLoadingId(null); }
   };
 
   // Скип трека в Spotify
@@ -290,8 +278,8 @@ export default function AdminPage() {
     try {
       await callAdminApi('skip');
       showToast('Трек в Spotify переключен (Skip)');
-    } catch (e: any) {
-      showToast(e.message, 'err');
+    } catch (e: unknown) {
+      showToast(errorText(e), 'err');
     }
   };
   
@@ -303,9 +291,9 @@ export default function AdminPage() {
     try {
       await callAdminApi('clear_queue');
       showToast('Очередь ожидания очищена');
-    } catch (e: any) {
+    } catch (e: unknown) {
       setRequests(previousRequests);
-      showToast(e.message, 'err');
+      showToast(errorText(e), 'err');
     }
   };
 
@@ -316,8 +304,8 @@ export default function AdminPage() {
       await callAdminApi('clear_history');
       showToast(streamState?.automationEnabled ? 'История текущего стрима скрыта' : 'История полностью очищена');
       setRequests((prev) => prev.filter((r) => r.status === 'pending' || (streamState?.automationEnabled && r.stream_session_id !== streamState.sessionId)));
-    } catch (e: any) {
-      showToast(e.message, 'err');
+    } catch (e: unknown) {
+      showToast(errorText(e), 'err');
     }
   };
 
@@ -325,15 +313,15 @@ export default function AdminPage() {
   const handleExportPlaylist = async () => {
     setIsExporting(true);
     try {
-      const res = await fetch('/api/admin/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin, sessionId: streamState?.automationEnabled ? (historySession === 'current' ? streamState.sessionId : historySession) : null }) });
+      const res = await fetch('/api/admin/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: streamState?.automationEnabled ? (historySession === 'current' ? streamState.sessionId : historySession) : null }) });
       const data = await res.json();
-      if (data.url) {
+      if (res.ok && data.url) {
         showToast('Плейлист успешно создан!');
         window.open(data.url, '_blank');
       } else {
         showToast('Ошибка: ' + (data.error || 'Неизвестная ошибка'), 'err');
       }
-    } catch (e) {
+    } catch {
       showToast('Сбой при экспорте', 'err');
     } finally {
       setIsExporting(false);
@@ -346,8 +334,8 @@ export default function AdminPage() {
     try {
       await callAdminApi('update_settings', settings);
       showToast('Настройки стрима успешно сохранены!');
-    } catch (err: any) {
-      showToast(err.message, 'err');
+    } catch (err: unknown) {
+      showToast(errorText(err), 'err');
     }
   };
 
@@ -496,14 +484,31 @@ export default function AdminPage() {
             setStreamBusy(true);
             try {
               await callAdminApi(streamState?.automationEnabled && streamState.connectionHealthy ? 'stream_disable' : 'stream_enable');
-              const response = await fetch('/api/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin, action: 'stream_status' }) });
+              const response = await fetch('/api/admin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'stream_status' }) });
               if (response.ok) setStreamState((await response.json()).stream);
-              const { data } = await supabase.from('stream_settings').select('*').eq('id', 1).single();
-              if (data) setSettings(data);
+              const latest = await callAdminApi('read_data');
+              if (latest.settings) setSettings(latest.settings);
               showToast(streamState?.automationEnabled && streamState.connectionHealthy ? 'Автоматическое управление выключено' : 'Автоматическое управление включено');
-            } catch (e: any) { showToast(e.message, 'err'); }
+            } catch (e: unknown) { showToast(errorText(e), 'err'); }
             finally { setStreamBusy(false); }
           }} className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-semibold cursor-pointer disabled:opacity-50">{streamBusy ? 'Подключение…' : streamState?.automationEnabled ? streamState.connectionHealthy ? 'Выключить автоматику' : 'Восстановить подключение' : 'Включить автоматику Twitch'}</button>
+        </div>
+
+        <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+          <div><p className="text-sm font-semibold">Музыкальные команды Twitch: {streamState?.musicCommandsEnabled ? 'прямое подключение включено' : 'через Nightbot'}</p><p className="text-xs text-[#A7A7A7] mt-1">Перед включением переподключи Twitch во вкладке «Голосования» и отключи в Nightbot команды !sr, !song, !wrongsong и !очередь.</p></div>
+          <button type="button" disabled={!streamState || streamBusy} onClick={async () => {
+            if (!streamState) return;
+            if (!streamState.musicCommandsEnabled && !streamState.chatWriteGranted) { setActiveTab('polls'); showToast('Переподключи Twitch и разреши отправку сообщений.', 'err'); return; }
+            if (!streamState.musicCommandsEnabled && !confirm('Команды !sr, !song, !wrongsong и !очередь отключены в Nightbot? Иначе ответы будут дублироваться.')) return;
+            setStreamBusy(true);
+            try {
+              await callAdminApi('chat_commands', { enabled: !streamState.musicCommandsEnabled });
+              const result = await callAdminApi('stream_status');
+              setStreamState(result.stream);
+              showToast(streamState.musicCommandsEnabled ? 'Прямые команды выключены' : 'Прямые команды Twitch включены');
+            } catch (error) { showToast(error instanceof Error ? error.message : 'Не удалось изменить режим команд.', 'err'); }
+            finally { setStreamBusy(false); }
+          }} className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-semibold cursor-pointer disabled:opacity-50">{streamState?.musicCommandsEnabled ? 'Выключить прямые команды' : 'Включить прямые команды'}</button>
         </div>
 
         {/* Навигация по вкладкам */}
@@ -563,7 +568,7 @@ export default function AdminPage() {
             Голосования
           </button>
         </div>
-        {activeTab === 'polls' && <PollsPanel pin={pin} />}
+        {activeTab === 'polls' && <PollsPanel />}
 
         {/* ВКЛАДКА 1: ЖИВАЯ ОЧЕРЕДЬ (PENDING) */}
         {activeTab === 'queue' && (
@@ -596,7 +601,7 @@ export default function AdminPage() {
                           </span>
                         )}
                         <span className="px-2 py-0.5 text-[10px] rounded-md bg-white/10 text-[#A7A7A7]">
-                          {item.source === 'twitch_chat' ? 'Twitch' : 'Сайт'}
+                          {item.source === 'twitch_chat' || item.source === 'twitch' ? 'Twitch' : 'Сайт'}
                         </span>
                       </div>
                       <p className="text-sm text-[#A7A7A7] truncate mt-0.5">{item.artist_name}</p>
@@ -604,6 +609,7 @@ export default function AdminPage() {
                         Заказал: <span className="text-white font-medium">{item.sender_name}</span> •{' '}
                         {timeAgo(item.created_at)}
                       </p>
+                      {item.enqueue_claim && <p className="text-xs text-amber-300 mt-2">{!item.enqueue_claim.reviewable ? 'Отправляем в Spotify…' : 'Проверь очередь Spotify: подтверждение не получено.'}</p>}
                     </div>
                   </div>
 
@@ -622,7 +628,7 @@ export default function AdminPage() {
 
                     <button
                       type="button"
-                      disabled={loadingId === item.id}
+                      disabled={loadingId === item.id || Boolean(item.enqueue_claim)}
                       onClick={() => handleReject(item.id)}
                       className="px-4 py-2.5 rounded-2xl bg-[#E91429]/15 hover:bg-[#E91429]/30 border border-[#E91429]/30 text-[#ff6b78] text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
                     >
@@ -630,9 +636,13 @@ export default function AdminPage() {
                       Отклонить
                     </button>
 
+                    {item.enqueue_claim?.reviewable && <>
+                      <button type="button" disabled={loadingId === item.id} onClick={() => handleResolveEnqueue(item.id, 'queued')} className="px-3 py-2 rounded-xl bg-white/10 text-xs font-semibold cursor-pointer">Уже в Spotify</button>
+                      <button type="button" disabled={loadingId === item.id} onClick={() => handleResolveEnqueue(item.id, 'retry')} className="px-3 py-2 rounded-xl bg-white/10 text-xs font-semibold cursor-pointer">Нет в Spotify</button>
+                    </>}
                     <button
                       type="button"
-                      disabled={loadingId === item.id}
+                      disabled={loadingId === item.id || Boolean(item.enqueue_claim)}
                       onClick={() => handleApprove(item)}
                       className="px-5 py-2.5 rounded-2xl bg-[#1DB954] hover:bg-[#1ed760] text-black text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
                     >
@@ -937,7 +947,7 @@ export default function AdminPage() {
                   onChange={(e) => setSettings({ ...settings, widget_custom_image: e.target.value })}
                   className="w-full px-4 py-2.5 rounded-2xl bg-black/40 border border-white/10 text-sm font-mono text-white"
                 />
-                <p className="text-[10px] text-[#A7A7A7] mt-1.5">Будет показываться, когда плеер на паузе или у трека нет обложки.</p>
+                <p className="text-[10px] text-[#A7A7A7] mt-1.5">Показывается в виджете вместо обложек треков.</p>
               </div>
 
               <div className="col-span-1 md:col-span-2 flex items-center gap-3">

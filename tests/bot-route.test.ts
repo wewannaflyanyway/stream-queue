@@ -17,8 +17,8 @@ test('chat requests use Spotify ranking, preserve links and handle Spotify error
 
   mock.module(new URL('../src/lib/supabase.ts', import.meta.url).href, { namedExports: {
     getServiceSupabase: () => ({ from: (table: string) => table === 'stream_settings'
-      ? { select: () => ({ eq: () => ({ single: async () => ({ data: { is_accepting: true, auto_approve: true, explicit_mode: 'allow' } }) }) }) }
-      : { insert: (row: Record<string, unknown>) => ({ select: () => ({ single: async () => { saved.push(row); return { data: { id: `request-${saved.length}` }, error: null }; } }) }),
+      ? { select: () => ({ eq: () => ({ single: async () => ({ data: { is_accepting: true, auto_approve: true, explicit_mode: 'allow', max_queue_size: 15, max_duration_sec: 600, cooldown_user_sec: 0, prevent_duplicates: false, banned_words: '', banned_artists: '' } }) }) }) }
+      : { select: () => ({ eq: () => ({ eq: async () => ({ count: 0, error: null }) }) }), insert: (row: Record<string, unknown>) => ({ select: () => ({ single: async () => { saved.push(row); return { data: { id: `request-${saved.length}` }, error: null }; } }) }),
         update: (row: Record<string, unknown>) => ({ eq: async (_key: string, id: string) => { Object.assign(saved[Number(id.split('-')[1]) - 1], row); return { error: null }; } }) } }),
   } });
   mock.module(new URL('../src/lib/spotify.ts', import.meta.url).href, { namedExports: {
@@ -33,6 +33,8 @@ test('chat requests use Spotify ranking, preserve links and handle Spotify error
     },
   } });
   mock.module(new URL('../src/lib/stream/lifecycle.ts', import.meta.url).href, { namedExports: { reconcileStreamState: async () => null } });
+  mock.module(new URL('../src/lib/chat/mode.ts', import.meta.url).href, { namedExports: { musicCommandsEnabled: async () => false } });
+  mock.module(new URL('../src/lib/enqueue-request.ts', import.meta.url).href, { namedExports: { enqueueRequest: async (_db: unknown, id: string) => { queueCalls++; if (queueStatus !== 204) return 'not_available'; saved[Number(id.split('-')[1]) - 1].status = 'approved'; return 'queued'; } } });
   try {
     const { GET } = await import('../src/app/api/bot/route');
     const run = async (query: string) => {

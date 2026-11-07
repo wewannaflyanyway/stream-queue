@@ -20,7 +20,7 @@ async function loadRequests(sessionId: string | null, offlineSince: string | nul
   async function collect(mode: 'pending' | 'history'): Promise<QueueRequest[]> {
     const rows: QueueRequest[] = [];
     for (let offset = 0; ; offset += 1000) {
-      let query = db.from('song_requests').select('id,created_at,queued_at,stream_session_id,stream_history_hidden,track_name,artist_name,sender_name,spotify_uri,status').order('created_at', { ascending: true }).order('id', { ascending: true }).range(offset, offset + 999);
+      let query = db.from('song_requests').select('id,created_at,queued_at,stream_session_id,stream_history_hidden,track_name,artist_name,sender_name,sender_twitch_id,source,spotify_uri,status').order('created_at', { ascending: true }).order('id', { ascending: true }).range(offset, offset + 999);
       if (mode === 'pending') query = query.eq('status', 'pending').eq('stream_pending_archived', false);
       else {
         query = query.in('status', ['approved', 'played']);

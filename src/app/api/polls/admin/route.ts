@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 import { randomBytes } from 'node:crypto';
-import { checkPin, PollError, pollResponseError, pollRpc, readPollState } from '@/lib/polls/server';
+import { PollError, pollResponseError, pollRpc, readPollState } from '@/lib/polls/server';
+import { hasAdminSession } from '@/lib/admin-auth';
 import { validateDraft, validateStyle } from '@/lib/polls/model';
 import { checkTwitch, twitchConfig, TWITCH_SCOPES } from '@/lib/polls/twitch';
 
@@ -10,7 +11,7 @@ export async function POST(request: Request) {
     if (raw.length > 16_384) throw new PollError('Запрос слишком большой.', 413);
     let body;
     try { body = JSON.parse(raw); } catch { throw new PollError('Некорректный JSON.'); }
-    if (!body || !checkPin(body.pin)) throw new PollError('Неверный PIN.', 401);
+    if (!body || !hasAdminSession(request)) throw new PollError('Сессия админки истекла. Войдите снова.', 401);
     const { action, payload } = body;
     if (action === 'connect') {
       const config = twitchConfig();

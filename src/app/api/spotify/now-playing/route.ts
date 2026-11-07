@@ -1,10 +1,13 @@
 import { NextResponse } from 'next/server';
-import { getStreamerAccessToken } from '@/lib/spotify';
+import { fetchWithTimeout, getStreamerAccessToken } from '@/lib/spotify';
 import { getServiceSupabase } from '@/lib/supabase';
 import { readStreamState } from '@/lib/stream/lifecycle';
 import { associateQueue, type QueueRequest } from '@/lib/stream/queue';
 
-export async function GET() {
+const publicCache = { 'Cache-Control': 'public, max-age=0, s-maxage=2, stale-while-revalidate=2' };
+
+export async function GET(request: Request) {
+  void request.url;
   try {
     const token = await getStreamerAccessToken();
     const supabase = getServiceSupabase();
@@ -15,37 +18,36 @@ export async function GET() {
       .eq('id', 1)
       .single();
 
-    const playerRes = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
+    const playerRes = await fetchWithTimeout('https://api.spotify.com/v1/me/player/currently-playing', {
       headers: { Authorization: `Bearer ${token}` },
       cache: 'no-store',
     });
 
-    if (!playerRes.ok || playerRes.status === 204) {
-      return NextResponse.json({ isPlaying: false, settings });
+    if (playerRes.status === 204) {
+      return NextResponse.json({ isPlaying: false, settings }, { headers: publicCache });
     }
+    if (!playerRes.ok) throw new Error(`Spotify player HTTP ${playerRes.status}`);
 
     const data = (await playerRes.json()) as {
       item?: {
         uri: string;
         name: string;
         artists?: Array<{ name: string }>;
-        album?: { images?: Array<{ url?: string }> };
       };
       is_playing?: boolean;
     };
 
     if (!data || !data.item) {
-      return NextResponse.json({ isPlaying: false, settings });
+      return NextResponse.json({ isPlaying: false, settings }, { headers: publicCache });
     }
 
     const current = {
       name: data.item.name,
       artist: (data.item.artists || []).map((artist) => artist.name).join(', '),
-      cover: data.item.album?.images?.[0]?.url || null,
       orderedBy: null as string | null,
     };
 
-    const queueRes = await fetch('https://api.spotify.com/v1/me/player/queue', {
+    const queueRes = await fetchWithTimeout('https://api.spotify.com/v1/me/player/queue', {
       headers: { Authorization: `Bearer ${token}` },
       cache: 'no-store',
     });
@@ -99,12 +101,12 @@ export async function GET() {
       current,
       next,
       settings,
-    });
+    }, { headers: publicCache });
   } catch (error) {
     console.error('Widget API Error:', error);
     return NextResponse.json({
       isPlaying: false,
       error: 'Spotify недоступен. Пауза/перезапуск виджета через пару секунд.',
-    }, { status: 200 });
+    }, { status: 200, headers: { 'Cache-Control': 'no-store' } });
   }
 }

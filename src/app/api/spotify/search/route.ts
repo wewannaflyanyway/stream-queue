@@ -17,9 +17,9 @@ export async function GET(req: NextRequest) {
       { tracks },
       { headers: { 'Cache-Control': 'no-store, max-age=0' } }
     );
-  } catch (err: any) {
+  } catch (err: unknown) {
     return NextResponse.json(
-      { error: err.message || 'Ошибка поиска' },
+      { error: err instanceof Error ? err.message : 'Ошибка поиска' },
       { status: 500, headers: { 'Cache-Control': 'no-store, max-age=0' } }
     );
   }
